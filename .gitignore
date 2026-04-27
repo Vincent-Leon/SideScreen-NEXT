@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# 鸿蒙端构建工件 / IDE 缓存 / 依赖（可重生成）
+harmony-client/.hvigor/
+harmony-client/.idea/
+harmony-client/oh_modules/
+harmony-client/entry/build/
+harmony-client/entry/.cxx/
+harmony-client/entry/oh_modules/
+harmony-client/build/
+harmony-client/local.properties
+
+# Swift 包构建
+machost-fork/.build/
+machost-fork/.swiftpm/
+machost-fork/Package.resolved
+
+# 临时备份
+*.original.bak
+*.swp
+*~

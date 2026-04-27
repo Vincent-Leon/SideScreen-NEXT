@@ -59,6 +59,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Always read/written on the main thread (where onToggleServer fires).
     private var startInFlight: Bool = false
     private var permissionCheckTimer: Timer?
+    /// HDC reverse tunnel auto-recovery (HarmonyOS device equivalent of adb reverse).
+    /// Polls every few seconds while server is up; re-runs `hdc rport` when the
+    /// tunnel is missing (e.g. MatePad just plugged in, or hap reinstall flushed it).
+    private var hdcMonitorTimer: DispatchSourceTimer?
+    private var cachedHDCPath: String? = nil
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("✅ App launched")
@@ -322,6 +327,139 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }.value
     }
 
+    // MARK: - HDC reverse tunnel (HarmonyOS device equivalent of adb reverse)
+
+    /// 找 hdc 二进制：优先 SideScreen.app bundle 内置（Resources/hdc/hdc），其次外部 SDK 路径。
+    /// 内置版本 + libusb_shared.dylib 跟 hdc 在同目录，rpath @loader_path/. 自动解析。
+    private func findHDCBinary() -> String? {
+        if let cached = cachedHDCPath, FileManager.default.fileExists(atPath: cached) {
+            return cached
+        }
+        // 1) Bundle 内置（最优先，开箱即用）
+        if let bundled = Bundle.main.path(forResource: "hdc", ofType: nil, inDirectory: "hdc"),
+           FileManager.default.fileExists(atPath: bundled) {
+            // 拷贝过来时 +x 位有可能丢，主动补一下
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bundled)
+            cachedHDCPath = bundled
+            debugLog("hdc: using bundled \(bundled)")
+            return bundled
+        }
+        // 2) 外部 SDK 路径
+        let homedir = NSHomeDirectory()
+        var candidates: [String] = [
+            "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc",
+        ]
+        let sdkRoot = "\(homedir)/Library/Huawei/Sdk/HarmonyOS-NEXT"
+        if let versions = try? FileManager.default.contentsOfDirectory(atPath: sdkRoot) {
+            for v in versions {
+                candidates.append("\(sdkRoot)/\(v)/openharmony/toolchains/hdc")
+            }
+        }
+        let ohSdkRoot = "\(homedir)/Library/OpenHarmony/Sdk"
+        if let versions = try? FileManager.default.contentsOfDirectory(atPath: ohSdkRoot) {
+            for v in versions {
+                candidates.append("\(ohSdkRoot)/\(v)/toolchains/hdc")
+            }
+        }
+        for path in candidates {
+            if FileManager.default.fileExists(atPath: path) {
+                cachedHDCPath = path
+                debugLog("hdc: using external SDK \(path)")
+                return path
+            }
+        }
+        // 3) which hdc
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        proc.arguments = ["hdc"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let p = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !p.isEmpty, FileManager.default.fileExists(atPath: p) {
+                cachedHDCPath = p
+                debugLog("hdc: using PATH \(p)")
+                return p
+            }
+        } catch { /* ignore */ }
+        debugLog("hdc not found anywhere — USB tunnel will not auto-establish")
+        return nil
+    }
+
+    /// 检测当前设备列表里目标 port 的 reverse 隧道是否已存在。
+    private func hdcReverseAlreadySet(hdc: String, port: UInt16) -> Bool {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: hdc)
+        proc.arguments = ["fport", "ls"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            // 行格式：62BBB25A29201944    tcp:8888 tcp:8888    [Reverse]
+            return out.contains("[Reverse]") && out.contains("tcp:\(port) tcp:\(port)")
+        } catch {
+            return false
+        }
+    }
+
+    /// 单次尝试建立 hdc rport（如果已存在则跳过）。
+    private func setupHDCReverseOnce() {
+        guard let hdc = findHDCBinary() else { return }
+        let port = settings.port
+        if hdcReverseAlreadySet(hdc: hdc, port: port) { return }
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: hdc)
+        proc.arguments = ["rport", "tcp:\(port)", "tcp:\(port)"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if proc.terminationStatus == 0 || out.contains("OK") {
+                debugLog("hdc rport established: tcp:\(port) → tcp:\(port)")
+            } else if out.contains("not found") || out.contains("no targets") || out.contains("Empty") {
+                // 设备没插 / hdc daemon 没识别到设备 — 等下次轮询
+            } else {
+                // 某些 hdc 版本对已存在的转发会报 "TCP Port listen failed"，是良性的，跳过日志噪音
+                if !out.contains("listen failed") {
+                    debugLog("hdc rport: \(out)")
+                }
+            }
+        } catch {
+            debugLog("hdc rport spawn failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// 启动 5s 巡检循环，每次 tick 检查 + 必要时重建。
+    /// 设备插拔 / hap 重装造成的隧道丢失会被自动恢复。
+    private func startHDCMonitor() {
+        stopHDCMonitor()
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + 0.5, repeating: 5.0)
+        timer.setEventHandler { [weak self] in
+            self?.setupHDCReverseOnce()
+        }
+        timer.resume()
+        hdcMonitorTimer = timer
+        debugLog("HDC monitor started (5s polling)")
+    }
+
+    private func stopHDCMonitor() {
+        hdcMonitorTimer?.cancel()
+        hdcMonitorTimer = nil
+    }
+
     @MainActor
     func showPermissionAlert() {
         let version = ProcessInfo.processInfo.operatingSystemVersion
@@ -437,6 +575,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 frameRate: settings.effectiveRefreshRate
             )
 
+            // HarmonyOS 设备：自动 hdc rport（与上游 setupADBReverse 并存，互不干扰）
+            // 巡检循环会处理 MatePad 拔插 / hap 重装造成的隧道丢失
+            setupHDCReverseOnce()
+            startHDCMonitor()
+
             await MainActor.run {
                 settings.isRunning = true
             }
@@ -460,6 +603,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func stopServer() {
         // Save display position before destroying
         virtualDisplayManager?.saveDisplayPosition()
+
+        // 停 HDC 巡检（不主动卸 rport — 让 hdc daemon 自然回收）
+        stopHDCMonitor()
 
         screenCapture?.stopStreaming()
         streamingServer?.stop()

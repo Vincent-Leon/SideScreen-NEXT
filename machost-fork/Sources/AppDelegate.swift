@@ -554,6 +554,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
 
+            streamingServer?.onClientDisconnected = { [weak self] in
+                guard let self = self else { return }
+                Task { @MainActor in
+                    self.settings.clientConnected = false
+                    if self.settings.stopOnDisconnect && self.settings.isRunning {
+                        debugLog("Client disconnected and stopOnDisconnect=true → stopping server")
+                        self.stopServer()
+                    }
+                }
+            }
+
             streamingServer?.onTouchEvent = { [weak self] x, y, action, pointerCount, x2, y2 in
                 self?.handleTouch(x: x, y: y, action: action, pointerCount: pointerCount, x2: x2, y2: y2)
             }

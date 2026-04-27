@@ -182,6 +182,8 @@ export class StreamClient {
     const sendOpts: socket.TCPSendOptions = { data: packet.buffer }
     this.tcp.send(sendOpts).catch((err: BusinessError): void => {
       console.error(TAG, `ping send error: code=${err.code} msg=${err.message}`)
+      // socket 已断 → 停 ping timer + 触发 disconnect 流程，避免每秒 spam 错误
+      this.handleClose(`ping send: ${err.message ?? 'socket dead'}`)
     })
   }
 }

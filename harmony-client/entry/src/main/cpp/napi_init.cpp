@@ -201,9 +201,9 @@ private:
         attr.pts = 0;
         attr.size = (int32_t)size;
         attr.offset = 0;
-        // 鸿蒙 HEVC 解码器需要明确标识 IDR / sync 帧。Mac 端全 I 帧编码，每帧都是 IDR。
-        // 不设此 flag 可能导致解码器一直丢帧（被当成非关键帧）。
-        attr.flags = AVCODEC_BUFFER_FLAGS_SYNC_FRAME;
+        // 让 decoder 从 NAL header 自己识别 IDR/P/B。之前强制 SYNC_FRAME，让 decoder
+        // 在 GOP 模式下收到 P 帧时进入 wait state（onNeedInputBuffer 永不触发 → feed=0）。
+        attr.flags = AVCODEC_BUFFER_FLAGS_NONE;
         OH_AVBuffer_SetBufferAttr(slot.buffer, &attr);
 
         OH_AVErrCode err = OH_VideoDecoder_PushInputBuffer(codec_, slot.index);

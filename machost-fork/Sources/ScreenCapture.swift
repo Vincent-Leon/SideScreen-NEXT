@@ -471,6 +471,11 @@ class ScreenCapture {
 
     // MARK: - Settings update
 
+    /// 让下一帧强制成 IDR — 客户端连接时调，避免 GOP 模式下 client join 错过 keyframe。
+    func requestKeyframe() {
+        encoder?.requestKeyframe()
+    }
+
     func updateEncoderSettings(bitrateMbps: Int, quality: String, gamingBoost: Bool) {
         encoder?.updateSettings(bitrateMbps: bitrateMbps, quality: quality, gamingBoost: gamingBoost)
     }

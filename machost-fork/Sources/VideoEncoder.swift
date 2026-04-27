@@ -11,6 +11,13 @@ class VideoEncoder {
     private var quality: String = "medium"
     private var gamingBoost: Bool = false
     private var frameRate: Int = 60
+    /// 设为 true 后，下一次 encode() 会通过 kVTEncodeFrameOptionKey_ForceKeyFrame
+    /// 把当前帧编为 IDR。客户端连接时调用，确保 GOP 模式下 client 能立即拿到关键帧解码。
+    private var forceKeyframeNext: Bool = false
+
+    func requestKeyframe() {
+        forceKeyframeNext = true
+    }
     init(width: Int, height: Int, bitrateMbps: Int = 20, quality: String = "ultralow", gamingBoost: Bool = false, frameRate: Int = 60) {
         self.width = width
         self.height = height
@@ -118,12 +125,18 @@ class VideoEncoder {
         let refconValue = UnsafeMutableRawPointer.allocate(byteCount: 8, alignment: 8)
         refconValue.storeBytes(of: captureNanos, as: UInt64.self)
 
+        var frameProperties: CFDictionary? = nil
+        if forceKeyframeNext {
+            forceKeyframeNext = false
+            frameProperties = [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary
+        }
+
         VTCompressionSessionEncodeFrame(
             session,
             imageBuffer: pixelBuffer,
             presentationTimeStamp: presentationTimeStamp,
             duration: duration,
-            frameProperties: nil,
+            frameProperties: frameProperties,
             sourceFrameRefcon: refconValue,
             infoFlagsOut: nil
         )

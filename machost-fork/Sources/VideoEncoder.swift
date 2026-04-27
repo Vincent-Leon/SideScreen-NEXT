@@ -61,10 +61,9 @@ class VideoEncoder {
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_HEVC_Main_AutoLevel)
 
-        // Dynamic bitrate - remove strict rate limiting for smoother streaming
-        // All-intra needs higher bitrate for text sharpness
-        // USB-C supports 5Gbps, so 80-100Mbps is fine
-        let effectiveBitrate = gamingBoost ? bitrateMbps : max(bitrateMbps, 60)
+        // 上游对非 gaming 模式强制 ≥ 60 Mbps（为全 I 帧文字清晰度），开 GOP 后 30 Mbps 已够；
+        // 下限放宽到 15 Mbps，让用户滑块真正生效。
+        let effectiveBitrate = gamingBoost ? bitrateMbps : max(bitrateMbps, 15)
         let bitrateBps = effectiveBitrate * 1_000_000
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrateBps as CFNumber)
         // Removed DataRateLimits - was causing bursty traffic and buffer stalls
@@ -72,11 +71,11 @@ class VideoEncoder {
         // Frame rate settings
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: frameRate as CFNumber)
 
-        // All-intra: every frame is a keyframe
-        // Eliminates P-frame dependency → no corruption from frame loss
-        // Higher bitrate (~3x) but USB-C has plenty of bandwidth
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 1 as CFNumber)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 0.0 as CFNumber)
+        // GOP=60：每秒 1 个 IDR 之间用 P 帧。上游用全 I 帧（Interval=1）以避免单帧丢失级联，
+        // 但代价是每帧体积是 P 帧的 3-5×、编码时间也更长。USB hdc rport 隧道几乎不丢包，
+        // 走 GOP 显著降码率 + 编码时间，端到端延迟更低。如果走 Wi-Fi 且丢包多，可以再调回 1。
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval, value: 60 as CFNumber)
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 1.0 as CFNumber)
 
         // Critical for low latency - NO frame reordering (no B-frames)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)

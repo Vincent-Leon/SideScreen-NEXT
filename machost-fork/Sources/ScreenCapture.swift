@@ -188,7 +188,9 @@ class ScreenCapture {
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
         config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         config.showsCursor = true
-        config.queueDepth = 4
+        // queueDepth=2 : SCStream 内部最多缓 2 帧（上游 4 → 砍 ~33ms 最坏延迟）
+        // 太小（1）会丢帧，2 是低延迟与稳定性的平衡点
+        config.queueDepth = 2
         config.capturesAudio = false
         config.backgroundColor = .clear
         config.scalesToFit = false

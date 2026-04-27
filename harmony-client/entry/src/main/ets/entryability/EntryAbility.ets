@@ -29,6 +29,16 @@ export default class EntryAbility extends UIAbility {
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
     });
+
+    // 副屏沉浸体验：全屏 + 隐藏系统栏 + 屏幕常亮
+    try {
+      const mainWin = windowStage.getMainWindowSync();
+      mainWin.setWindowLayoutFullScreen(true);
+      mainWin.setWindowSystemBarEnable([]);   // 状态栏 + 导航栏全部隐藏
+      mainWin.setWindowKeepScreenOn(true);    // 看视频时不息屏
+    } catch (e) {
+      hilog.error(DOMAIN, 'testTag', 'fullscreen setup failed: %{public}s', JSON.stringify(e));
+    }
   }
 
   onWindowStageDestroy(): void {

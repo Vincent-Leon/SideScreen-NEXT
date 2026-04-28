@@ -24,6 +24,9 @@ class StreamingServer {
     private var listenFd: Int32 = -1
     private var clientFd: Int32 = -1
     private let clientLock = NSLock()
+    /// 序列化所有写到 clientFd 的逻辑消息，避免视频帧的 (header,data) 两个 send 之间被
+    /// pong / displayConfig 插入造成字节交错（"stream misaligned" bug 的根因）。
+    private let sendLock = NSLock()
 
     // 上游接口对齐
     var onClientConnected: (() -> Void)?
@@ -286,21 +289,24 @@ class StreamingServer {
         frameQueue.async { [weak self] in
             guard let self = self else { return }
 
-            // 1 byte type + 4 byte BE size
-            var header = [UInt8]()
-            header.append(0)
-            let size = Int32(data.count).bigEndian
-            withUnsafeBytes(of: size) { header.append(contentsOf: $0) }
-
-            let okHeader = header.withUnsafeBufferPointer {
-                self.sendAll(fd: fd, bytes: UnsafeRawPointer($0.baseAddress!), length: header.count)
+            // 拼成单个 packet（1 byte type + 4 byte BE size + N bytes payload），用一次 sendAll
+            // 发出。原来的 header/data 分两次 send 会与 pong/displayConfig 交错，造成
+            // 客户端 stream misaligned。多一次 ~50 KB 的 memcpy 不算瓶颈。
+            var packet = Data(capacity: 5 + data.count)
+            packet.append(0)
+            var size = Int32(data.count).bigEndian
+            withUnsafeBytes(of: &size) { ptr in
+                packet.append(contentsOf: ptr)
             }
-            if !okHeader { self.droppedFrames += 1; return }
+            packet.append(data)
 
-            let okData = data.withUnsafeBytes { buf in
-                self.sendAll(fd: fd, bytes: buf.baseAddress!, length: data.count)
+            let ok = packet.withUnsafeBytes { buf in
+                self.sendAll(fd: fd, bytes: buf.baseAddress!, length: packet.count)
             }
-            if !okData { self.droppedFrames += 1; return }
+            if !ok {
+                self.droppedFrames += 1
+                return
+            }
 
             let sendAge = DispatchTime.now().uptimeNanoseconds - timestamp
             self.updateStats(bytes: data.count, frameAgeNs: sendAge)
@@ -309,7 +315,11 @@ class StreamingServer {
 
     // MARK: - Helpers
 
+    /// 持锁版本 — 单条逻辑消息内多次 send 的中间态期间持续持锁，
+    /// 阻止其他线程插入字节流（避免 stream misaligned）。
     private func sendAll(fd: Int32, bytes: UnsafeRawPointer, length: Int) -> Bool {
+        sendLock.lock()
+        defer { sendLock.unlock() }
         var offset = 0
         while offset < length && !isStopped {
             // MSG_NOSIGNAL 防止 SIGPIPE 杀进程（macOS 上是 SO_NOSIGPIPE 或 MSG_NOSIGNAL）

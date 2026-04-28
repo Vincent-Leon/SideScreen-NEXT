@@ -14,6 +14,7 @@
  */
 
 import { common } from '@kit.AbilityKit'
+import { batteryInfo } from '@kit.BasicServicesKit'
 import { StreamClient, StreamClientCallbacks } from '../net/StreamClient'
 import { Prefs, SavedConnection } from '../util/Prefs'
 import { nativeStart, nativePush, nativeStop, nativeIsReady } from 'libentry.so'
@@ -35,6 +36,9 @@ const COLOR_FPS: string = '#4CAF50'
 const COLOR_BITRATE: string = '#2196F3'
 const COLOR_RES: string = '#FF9800'
 const COLOR_RTT: string = '#E91E63'
+const COLOR_BAT: string = '#9C27B0'        // 紫色 — 跟其他几个 stats 颜色互不重复
+const COLOR_BAT_LOW: string = '#FF453A'    // 低电量阈值警示
+const COLOR_BAT_CHG: string = '#4CAF50'    // 充电中
 const COLOR_ERR: string = '#FF453A'
 
 interface StatColumnParams {
@@ -66,6 +70,11 @@ struct Index {
   @State surfaceLoaded: boolean = false
   @State decoderRunning: boolean = false
 
+  // ---- 电量 ----
+  @State batteryLevel: number = -1
+  @State batteryCharging: boolean = false
+  private batteryTimer: number = -1
+
   private client: StreamClient | null = null
 
   // ---- 重连 ----
@@ -91,9 +100,28 @@ struct Index {
       .catch((e: Error): void => {
         console.warn(TAG, `prefs init/load failed: ${e.message}`)
       })
+    this.refreshBattery()
+    // 每 60s 刷新一次电量（@ohos.batteryInfo 是同步 getter，开销很小）
+    this.batteryTimer = setInterval((): void => {
+      this.refreshBattery()
+    }, 60000)
+  }
+
+  private refreshBattery(): void {
+    try {
+      this.batteryLevel = batteryInfo.batterySOC
+      this.batteryCharging =
+        batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.ENABLE
+    } catch (e) {
+      console.warn(TAG, `battery read: ${(e as Error).message}`)
+    }
   }
 
   aboutToDisappear(): void {
+    if (this.batteryTimer >= 0) {
+      clearInterval(this.batteryTimer)
+      this.batteryTimer = -1
+    }
     this.cancelReconnect()
     this.stopStatsTimer()
     if (this.decoderRunning) {
@@ -489,6 +517,12 @@ struct Index {
             label: 'RTT',
             value: this.rttMs > 0 ? `${this.rttMs}ms` : '—',
             color: COLOR_RTT,
+          })
+          this.StatColumn({
+            label: this.batteryCharging ? 'BAT⚡' : 'BAT',
+            value: this.batteryLevel >= 0 ? `${this.batteryLevel}%` : '—',
+            color: this.batteryCharging ? COLOR_BAT_CHG :
+                   (this.batteryLevel >= 0 && this.batteryLevel <= 20 ? COLOR_BAT_LOW : COLOR_BAT),
           })
 
           // 关闭按钮（小圆形，跟着 4 列同行）

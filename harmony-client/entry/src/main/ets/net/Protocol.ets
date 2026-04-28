@@ -210,6 +210,19 @@ export function encodePing(nanos: bigint): Uint8Array {
 }
 
 /**
+ * 编码 type=0x03 客户端旋转请求（鸿蒙端 → Mac）。
+ * Mac 收到后会重建虚拟显示器以匹配新方向。
+ * @param degrees 0 / 90 / 180 / 270
+ */
+export function encodeClientRotation(degrees: number): Uint8Array {
+  const buf = new ArrayBuffer(5)
+  const view = new DataView(buf)
+  view.setUint8(0, 0x03)
+  view.setInt32(1, degrees, true) // LE
+  return new Uint8Array(buf)
+}
+
+/**
  * 编码 type=0x02 触控（v1 不发触控；保留供 v2 用）。
  * @param pointers 1 或 2 个触点；超过 2 点的会截断
  * @param action TOUCH_ACTION_DOWN / MOVE / UP

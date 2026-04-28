@@ -16,6 +16,12 @@ echo "=== 停 SideScreen ==="
 killall SideScreen 2>/dev/null || true
 sleep 1
 
+echo "=== 清旧版 TCC 授权（避免「Side Screen」在系统设置里重名堆积） ==="
+# 重签会换 code signature，旧 grant 与新 binary 不再匹配。手动 reset 让新版重新弹框。
+tccutil reset ScreenCapture com.sidescreen.app 2>/dev/null || true
+tccutil reset LocalNetwork    com.sidescreen.app 2>/dev/null || true
+tccutil reset Accessibility   com.sidescreen.app 2>/dev/null || true
+
 echo "=== 备份原 binary（仅一次） ==="
 test -f "$BIN.original.bak" || cp "$BIN" "$BIN.original.bak"
 

@@ -15,6 +15,7 @@
 
 import { common } from '@kit.AbilityKit'
 import { batteryInfo } from '@kit.BasicServicesKit'
+import { display } from '@kit.ArkUI'
 import { StreamClient, StreamClientCallbacks } from '../net/StreamClient'
 import { Prefs, SavedConnection } from '../util/Prefs'
 import { nativeStart, nativePush, nativeStop, nativeIsReady } from 'libentry.so'
@@ -75,6 +76,14 @@ struct Index {
   @State batteryCharging: boolean = false
   private batteryTimer: number = -1
 
+  // ---- 设备方向跟踪 ----
+  /** 上次发给 Mac 的方向（0=landscape, 90=portrait） */
+  private lastSentRotationDeg: number = -1
+  /** 设备原生方向 — 不同型号 native 不同（MatePad mini 是竖屏 native）。
+   *  通过 (display.rotation 枚举值 + 当前 W/H 是否倒置) 反推得到。 */
+  private nativeIsLandscape: boolean = true
+  private nativeDetected: boolean = false
+
   private client: StreamClient | null = null
 
   // ---- 重连 ----
@@ -105,6 +114,74 @@ struct Index {
     this.batteryTimer = setInterval((): void => {
       this.refreshBattery()
     }, 60000)
+
+    // App 启动时立即检测 native 方向（之后旋转事件就不再依赖 W/H 比较）
+    this.detectNativeOrientation()
+
+    // 监听设备方向变化，旋转后通知 Mac 重建虚拟显示器
+    display.on('change', (id: number): void => {
+      this.handleRotationChange()
+    })
+  }
+
+  /**
+   * 自动检测设备 native 方向（启动时调一次,之后 cache）。
+   *
+   * 数学：在任意旋转下,我们能观察到 (rotation enum, width, height)：
+   *   - rotation 0 / 2(180°)：W/H 是 native 值,没 swap
+   *   - rotation 1(90°) / 3(270°)：W/H 是 swap 过的（current = native swapped）
+   *
+   * 所以 nativeIsLandscape = (W>H) XOR (rotation 是 90/270)
+   * 例：MatePad mini 启动时若处于竖屏,rotation=0,W=1600,H=2560
+   *     → wBigger=false, halfTurn=false → nativeIsLandscape = false XOR false = false ✓
+   */
+  private detectNativeOrientation(): void {
+    try {
+      const d = display.getDefaultDisplaySync()
+      const r = d.rotation as number       // 0/1/2/3
+      const w = d.width as number
+      const h = d.height as number
+      const wIsBigger = w > h
+      const isHalfTurn = (r % 2) === 1
+      this.nativeIsLandscape = wIsBigger !== isHalfTurn
+      this.nativeDetected = true
+      console.info(TAG, `native orientation: ${this.nativeIsLandscape ? 'landscape' : 'portrait'} ` +
+        `(detected from rot=${r}, w=${w}, h=${h})`)
+    } catch (e) {
+      console.warn(TAG, `detectNativeOrientation: ${(e as Error).message}`)
+    }
+  }
+
+  /**
+   * 当前物理方向：横屏返回 0,竖屏返回 90。
+   * 用 rotation enum + native 反推（不依赖 W/H,避免转动瞬间 W/H 还没 swap 的小 race）。
+   */
+  private currentRotationDegrees(): number {
+    if (!this.nativeDetected) {
+      this.detectNativeOrientation()
+    }
+    try {
+      const d = display.getDefaultDisplaySync()
+      const r = d.rotation as number
+      const isHalfTurn = (r % 2) === 1
+      const isLandscape = this.nativeIsLandscape !== isHalfTurn  // XOR
+      return isLandscape ? 0 : 90
+    } catch (e) {
+      return 0
+    }
+  }
+
+  private handleRotationChange(): void {
+    if (!this.connected || this.client == null) return
+    const deg = this.currentRotationDegrees()
+    if (deg === this.lastSentRotationDeg) return
+    try {
+      const d = display.getDefaultDisplaySync()
+      console.info(TAG, `rotation change → display=${d.width}x${d.height} rotEnum=${d.rotation} ` +
+        `native=${this.nativeIsLandscape ? 'L' : 'P'} → sending ${deg}° (${deg === 0 ? 'landscape' : 'portrait'})`)
+    } catch (e) { /* ignore */ }
+    this.lastSentRotationDeg = deg
+    this.client.sendRotation(deg)
   }
 
   private refreshBattery(): void {
@@ -149,6 +226,13 @@ struct Index {
         this.startStatsTimer()
         Prefs.save({ host: this.host, port: this.port } as SavedConnection)
           .catch((e: Error): void => console.warn(TAG, `prefs.save: ${e.message}`))
+        // 连接成功立即同步当前方向给 Mac（不论 0/90，Mac 端会跟自己 base 比对决定是否重建）
+        // 这样 Mac base 是竖屏时 + MatePad 横屏，初始就能拉成横屏，不必等用户转一次
+        const deg = this.currentRotationDegrees()
+        this.lastSentRotationDeg = deg
+        if (this.client != null) {
+          this.client.sendRotation(deg)
+        }
       },
       onDisconnected: (reason: string): void => {
         this.connecting = false
@@ -169,9 +253,16 @@ struct Index {
         }
       },
       onDisplayConfig: (w: number, h: number, _rot: number): void => {
+        const dimsChanged = (w !== this.streamWidth || h !== this.streamHeight)
         this.streamWidth = w
         this.streamHeight = h
         this.status = 'Streaming'
+        // 收到新 dims 时（旋转后 Mac 端 W/H 互换）→ stop 旧 decoder 让 tryStartDecoder 重建
+        if (this.decoderRunning && dimsChanged) {
+          console.info(TAG, `displayConfig dims changed → restarting decoder`)
+          nativeStop()
+          this.decoderRunning = false
+        }
         this.tryStartDecoder()
       },
       onVideoFrame: (frame: Uint8Array): void => {

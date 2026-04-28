@@ -17,6 +17,7 @@ import {
   ProtocolHandler,
   DisplayConfig,
   encodePing,
+  encodeClientRotation,
 } from './Protocol'
 
 const TAG: string = '[StreamClient]'
@@ -47,6 +48,16 @@ export class StreamClient {
 
   isConnected(): boolean {
     return this.connected
+  }
+
+  /** 通知 Mac 客户端的当前方向（0/90/180/270），Mac 收到后重建虚拟显示器。 */
+  sendRotation(degrees: number): void {
+    if (!this.connected || this.tcp == null) return
+    const packet = encodeClientRotation(degrees)
+    const sendOpts: socket.TCPSendOptions = { data: packet.buffer }
+    this.tcp.send(sendOpts).catch((err: BusinessError): void => {
+      console.error(TAG, `sendRotation: code=${err.code} msg=${err.message}`)
+    })
   }
 
   async connect(host: string, port: number): Promise<void> {

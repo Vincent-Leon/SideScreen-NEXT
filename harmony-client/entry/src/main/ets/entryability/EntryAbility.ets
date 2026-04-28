@@ -30,12 +30,14 @@ export default class EntryAbility extends UIAbility {
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
     });
 
-    // 副屏沉浸体验：全屏 + 隐藏系统栏 + 屏幕常亮
+    // 副屏沉浸体验：全屏 + 隐藏系统栏 + 屏幕常亮 + 跟随设备方向
     try {
       const mainWin = windowStage.getMainWindowSync();
       mainWin.setWindowLayoutFullScreen(true);
       mainWin.setWindowSystemBarEnable([]);   // 状态栏 + 导航栏全部隐藏
       mainWin.setWindowKeepScreenOn(true);    // 看视频时不息屏
+      // AUTO_ROTATION：MatePad 旋转后画面跟随，由设备 sensor 决定横竖屏。
+      mainWin.setPreferredOrientation(window.Orientation.AUTO_ROTATION);
     } catch (e) {
       hilog.error(DOMAIN, 'testTag', 'fullscreen setup failed: %{public}s', JSON.stringify(e));
     }

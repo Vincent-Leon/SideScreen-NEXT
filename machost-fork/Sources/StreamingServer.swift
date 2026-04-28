@@ -33,6 +33,9 @@ class StreamingServer {
     var onClientDisconnected: (() -> Void)?
     var onTouchEvent: ((Float, Float, Int, Int, Float, Float) -> Void)?
     var onStats: ((Double, Double) -> Void)?
+    /// 客户端发起的旋转请求（type=0x03），rotation 单位为度 (0/90/180/270)。
+    /// AppDelegate 接收后重建虚拟显示器以匹配新方向。
+    var onClientRotation: ((Int) -> Void)?
 
     private let frameQueue = DispatchQueue(label: "frameQueue", qos: .userInteractive)
     private let acceptQueue = DispatchQueue(label: "acceptQueue", qos: .userInteractive)
@@ -213,6 +216,15 @@ class StreamingServer {
 
                 DispatchQueue.main.async { [weak self] in
                     self?.onTouchEvent?(x1, y1, Int(action), pc, x2, y2)
+                }
+
+            case 3:
+                // 客户端旋转请求：4 byte LE int32 rotation (degrees, 0/90/180/270)
+                var rotation: Int32 = 0
+                if recv(fd, &rotation, 4, Int32(MSG_WAITALL)) <= 0 { break recvLoop }
+                let rot = Int(rotation)
+                DispatchQueue.main.async { [weak self] in
+                    self?.onClientRotation?(rot)
                 }
 
             case 4:

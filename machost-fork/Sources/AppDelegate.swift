@@ -571,6 +571,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.handleTouch(x: x, y: y, action: action, pointerCount: pointerCount, x2: x2, y2: y2)
             }
 
+            streamingServer?.onClientRotation = { [weak self] rotation in
+                guard let self = self else { return }
+                Task { @MainActor in
+                    await self.handleClientRotation(rotation)
+                }
+            }
+
             streamingServer?.onStats = { [weak self] fps, mbps in
                 let captured = self
                 Task { @MainActor in
@@ -631,6 +638,83 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         settings.currentBitrate = 0
 
         print("⏹️ Server stopped")
+    }
+
+    /// 响应客户端发起的旋转请求：保持 listener / streamingServer 活着，只重建虚拟
+    /// 显示器与 ScreenCapture（W/H 互换）。客户端的 TCP 连接不断，重建完毕后会收到
+    /// 新的 displayConfig (type=0x01)，自己 reset decoder 即可。
+    @MainActor
+    private func handleClientRotation(_ requestedDegrees: Int) async {
+        let normalized = ((requestedDegrees % 360) + 360) % 360
+        let snapped = (normalized / 90) * 90  // 0/90/180/270
+        if !settings.isRunning {
+            debugLog("ignoring client rotation \(snapped)°: server not running")
+            return
+        }
+
+        // 客户端发的是"我物理处于这个方向"，Mac 的 settings.rotation 是"相对 base 是否 swap"
+        // 用户的 base 可能是横屏 (1920x1080) 也可能是竖屏 (1050x1680)
+        // → 根据 base 方向 vs 客户端方向算出该不该 swap
+        let clientWantsPortrait = (snapped == 90 || snapped == 270)
+        let parts = settings.resolution.split(separator: "x")
+        let baseW = Int(parts.first.map { String($0) } ?? "1920") ?? 1920
+        let baseH = Int(parts.dropFirst().first.map { String($0) } ?? "1200") ?? 1200
+        let baseIsPortrait = baseH > baseW
+        let targetRotation = (clientWantsPortrait != baseIsPortrait) ? 90 : 0
+
+        if targetRotation == settings.rotation {
+            debugLog("client rotation \(snapped)°: already in correct orientation (rotation=\(settings.rotation))")
+            return
+        }
+        debugLog("client physically \(snapped)° (base=\(baseW)x\(baseH)) → applying rotation \(targetRotation)°")
+        settings.rotation = targetRotation
+
+        // Tear down capture + virtual display
+        screenCapture?.stopStreaming()
+        screenCapture = nil
+        virtualDisplayManager?.saveDisplayPosition()
+        virtualDisplayManager?.destroyDisplay()
+        virtualDisplayManager = nil
+
+        do {
+            // 重新创建（resolutionSize getter 已根据 rotation 自动 swap W/H）
+            virtualDisplayManager = VirtualDisplayManager()
+            let size = settings.resolutionSize
+            try virtualDisplayManager?.createDisplay(
+                width: size.width,
+                height: size.height,
+                refreshRate: settings.refreshRate,
+                hiDPI: settings.hiDPI,
+                name: "SideScreen"
+            )
+            try? virtualDisplayManager?.disableMirrorMode()
+            virtualDisplayManager?.restoreDisplayPosition()
+
+            guard let displayID = virtualDisplayManager?.displayID else {
+                debugLog("rotation: no displayID after recreate")
+                return
+            }
+            screenCapture = try await ScreenCapture()
+            try await screenCapture?.setupForVirtualDisplay(displayID, refreshRate: settings.effectiveRefreshRate)
+
+            let physW = screenCapture?.displayWidth ?? size.width
+            let physH = screenCapture?.displayHeight ?? size.height
+            streamingServer?.setDisplaySize(width: physW, height: physH, rotation: snapped)
+            streamingServer?.sendDisplaySize()  // 推新 dims 给客户端
+
+            screenCapture?.startStreaming(
+                to: streamingServer,
+                bitrateMbps: settings.effectiveBitrate,
+                quality: settings.effectiveQuality,
+                gamingBoost: settings.gamingBoost,
+                frameRate: settings.effectiveRefreshRate
+            )
+            // 客户端 decoder 在拿到 displayConfig 后会重启,需要立刻拿到 IDR
+            screenCapture?.requestKeyframe()
+            debugLog("rotation: capture restarted at \(physW)x\(physH)")
+        } catch {
+            debugLog("rotation: rebuild failed: \(error)")
+        }
     }
 
     // MARK: - Gesture Properties

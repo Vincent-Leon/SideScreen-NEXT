@@ -215,6 +215,35 @@ struct Index {
     })
   }
 
+  // page 进入前台:首次启动 / 锁屏解锁 / 从其他 app 切回都会触发。
+  // 通了 USB 就自动连(用户期望:插着数据线打开 app 就直接开始)。
+  onPageShow(): void {
+    console.info(TAG, 'page shown — probing USB for auto-start')
+    this.checkUsbAutoStart().catch((e: Error): void => {
+      console.warn(TAG, `usb auto-start: ${e.message}`)
+    })
+  }
+
+  // page 进入后台:锁屏 / 切到桌面 / 切到其他 app 都会触发。
+  // 主动断开,让 Mac 端立刻移除 virtualDisplay,避免锁屏期间帧堆积、解锁后涌出。
+  onPageHide(): void {
+    if (!this.connected && !this.connecting) return
+    console.info(TAG, 'page hidden — disconnecting to release Mac virtual display')
+    this.doDisconnect().catch((e: Error): void => {
+      console.warn(TAG, `disconnect on hide: ${e.message}`)
+    })
+  }
+
+  /** 探测 USB 隧道,通就自动起 doAutoConnect。Wi-Fi/mDNS 不在此自动连(用户没插线时不强行接入)。 */
+  private async checkUsbAutoStart(): Promise<void> {
+    if (this.connected || this.connecting) return
+    const probe = await this.probeServer('127.0.0.1', 8888)
+    if (!probe.isSideScreen) return
+    if (this.connected || this.connecting) return  // probe 期间状态可能已变
+    console.info(TAG, 'USB tunnel up — auto-connecting')
+    await this.doAutoConnect()
+  }
+
   aboutToDisappear(): void {
     this.stopProbeTimer()
     this.stopUsbWatch()

@@ -13,7 +13,7 @@ SideScreen-NEXT/
 ├── PROJECT_BRIEF.md      # 用户实测背景 + 规划（早期分析，部分结论已被 PROTOCOL.md §5 修正）
 ├── PROTOCOL.md           # 协议规范（已逆向 + 实测 + 字节序确定）
 ├── machost-fork/         # Mac Host fork（基于上游 0.6.8 = commit 049caf8）
-└── harmony-client/       # 鸿蒙端客户端（DevEco 项目，包名 dev.sidescreen.next）
+└── harmony-client/       # 鸿蒙端客户端（DevEco 项目，包名 tech.visionflow.sidescreennext）
 ```
 
 ## Build / install
@@ -46,10 +46,10 @@ open /Applications/SideScreen.app
 cd harmony-client
 hvigorw assembleHap --mode module -p product=default -p buildMode=debug --no-daemon
 hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
-hdc shell aa start -a EntryAbility -b dev.sidescreen.next
+hdc shell aa start -a EntryAbility -b tech.visionflow.sidescreennext
 
 # 看 ArkTS 端日志（console.* 走 hilog tag JSAPP）
-hdc shell "hilog -x" | grep -E "JSAPP.*sidescreen.next"
+hdc shell "hilog -x" | grep -E "JSAPP.*sidescreennext"
 ```
 
 DevEco 项目 SDK：targetSdkVersion=API 23（DevEco 自带），compatibleSdkVersion=API 12（覆盖 MatePad mini API 22+ 设备）。

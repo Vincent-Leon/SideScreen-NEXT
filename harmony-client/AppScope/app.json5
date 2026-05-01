@@ -1,6 +1,6 @@
 {
   "app": {
-    "bundleName": "dev.sidescreen.next",
+    "bundleName": "tech.visionflow.sidescreennext",
     "vendor": "example",
     "versionCode": 1000200,
     "versionName": "0.2.0",

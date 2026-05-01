@@ -11,7 +11,7 @@
 | --- | --- |
 | 应用名（中） | Side Screen NEXT |
 | 应用名（英） | Side Screen NEXT |
-| Bundle Name | dev.sidescreen.next |
+| Bundle Name | tech.visionflow.sidescreennext |
 | Version | 0.2.0 |
 | 一级分类 | 工具 / Utilities |
 | 二级分类 | 实用工具 / Productivity |
@@ -27,19 +27,19 @@
 
 ### 应用名
 
-```
+```text
 Side Screen NEXT
 ```
 
 ### 一句话简介（≤ 80 字）
 
-```
+```text
 把华为平板变成 MacBook 的低延迟有线副屏。USB-C 直连延迟 30 ms，支持自动旋转、Wi-Fi 备用。
 ```
 
 ### 详细介绍
 
-```
+```text
 Side Screen NEXT 让你的鸿蒙平板秒变 Mac 第二屏幕。
 
 🚀 极致低延迟
@@ -75,7 +75,7 @@ github.com/vincenteMBP/SideScreen-NEXT
 
 ### 更新日志（v0.2.0）
 
-```
+```text
 首次发布 ✨
 - USB-C / Wi-Fi 双通道，自动切换以最低延迟为优先
 - 平板旋转 → Mac 副屏自动重建为对应朝向
@@ -86,7 +86,7 @@ github.com/vincenteMBP/SideScreen-NEXT
 
 ### 关键词（搜索优化）
 
-```
+```text
 副屏, 第二屏幕, Mac, MacBook, 投屏, 扩展显示器, USB-C, Sidecar, 平板副屏, 华为副屏, MatePad
 ```
 
@@ -96,19 +96,19 @@ github.com/vincenteMBP/SideScreen-NEXT
 
 ### App name
 
-```
+```text
 Side Screen NEXT
 ```
 
 ### Short description (≤ 80 chars)
 
-```
+```text
 Turn your HarmonyOS tablet into a low-latency wired second display for MacBook.
 ```
 
 ### Long description
 
-```
+```text
 Side Screen NEXT turns your HarmonyOS tablet into a second display for your MacBook.
 
 🚀 Ultra-low latency
@@ -143,7 +143,7 @@ github.com/vincenteMBP/SideScreen-NEXT
 
 ### Release notes (v0.2.0)
 
-```
+```text
 Initial release ✨
 - USB-C and Wi-Fi transports, auto-priority for lowest latency
 - Tablet rotation → Mac virtual display rebuilds to match
@@ -154,7 +154,7 @@ Initial release ✨
 
 ### Keywords
 
-```
+```text
 second display, sidecar, mac, macbook, screen extender, usb-c, harmonyos, matepad, external monitor, mirror, second screen
 ```
 

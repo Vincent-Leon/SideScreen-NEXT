@@ -9,7 +9,7 @@
  * Settings Modal: Show Stats toggle | Overlay Opacity slider | 8-pos picker | Disconnect | DONE
  */
 
-import { common } from '@kit.AbilityKit'
+import { common, bundleManager } from '@kit.AbilityKit'
 import { batteryInfo } from '@kit.BasicServicesKit'
 import { display, promptAction } from '@kit.ArkUI'
 import { socket } from '@kit.NetworkKit'
@@ -17,11 +17,13 @@ import { BusinessError } from '@kit.BasicServicesKit'
 import { StreamClient, StreamClientCallbacks } from '../net/StreamClient'
 import { Prefs, SavedConnection, SavedUiPrefs, Preset } from '../util/Prefs'
 import { discoverSideScreen, DiscoveredService } from '../util/MdnsDiscovery'
+import { I18n } from '../util/I18n'
 import { nativeStart, nativePush, nativeStop, nativeIsReady } from 'libentry.so'
 
 const TAG: string = '[Index]'
 const RECONNECT_DELAYS_MS: number[] = [3000, 5000, 8000]
 const PROBE_INTERVAL_MS: number = 5000
+const SOURCE_URL: string = 'https://github.com/vincenteMBP/SideScreen-NEXT'
 
 // 配色（与 Side Screen Android APK 对齐）
 const COLOR_BG: string = '#000000'
@@ -56,7 +58,7 @@ interface StatColumnParams {
 }
 
 interface ChecklistItemParams {
-  label: string
+  label: ResourceStr
   ok: boolean
 }
 
@@ -81,8 +83,8 @@ interface ReachableTarget {
 }
 
 interface StatToggleParams {
-  label: string
-  hint: string
+  label: ResourceStr
+  hint: ResourceStr
   isOn: boolean
   onChange: (v: boolean) => void
 }
@@ -96,7 +98,7 @@ struct Index {
   @State advancedExpanded: boolean = false
   @State connecting: boolean = false
   @State connected: boolean = false
-  @State status: string = 'Ready to connect'
+  @State status: string = ''
 
   // ---- 流状态 ----
   @State streamWidth: number = 0
@@ -122,6 +124,8 @@ struct Index {
 
   // ---- UI 偏好（持久化）----
   @State showSettings: boolean = false  // settings modal
+  @State showAbout: boolean = false     // about modal
+  @State appVersion: string = ''
   @State showTransport: boolean = true
   @State showFps: boolean = true
   @State showBitrate: boolean = true
@@ -162,6 +166,15 @@ struct Index {
 
   aboutToAppear(): void {
     const ctx = getContext(this) as common.UIAbilityContext
+    I18n.init(ctx)
+    this.status = I18n.s($r('app.string.status_ready'))
+    try {
+      const info = bundleManager.getBundleInfoForSelfSync(
+        bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT)
+      this.appVersion = info.versionName
+    } catch (e) {
+      console.warn(TAG, `getBundleInfoForSelfSync: ${(e as Error).message}`)
+    }
     Prefs.init(ctx)
       .then((): Promise<SavedConnection> => Prefs.load())
       .then((cfg: SavedConnection): Promise<SavedUiPrefs> => {
@@ -346,9 +359,9 @@ struct Index {
       // 闲置时根据扫描结果更新状态文案,避免 "Scanning…" 卡死
       if (!this.connected && !this.connecting && this.reconnectAttempts === 0) {
         if (found.length > 0) {
-          this.status = `${found.length} target${found.length > 1 ? 's' : ''} available`
+          this.status = I18n.s($r('app.string.status_targets_available'), found.length)
         } else {
-          this.status = 'Searching for SideScreen…'
+          this.status = I18n.s($r('app.string.status_searching'))
         }
       }
     } finally {
@@ -410,7 +423,8 @@ struct Index {
         this.connected = true
         this.reconnectAttempts = 0
         this.lastError = ''
-        this.status = `Streaming via ${this.currentTransport || 'TCP'}`
+        this.status = I18n.s($r('app.string.status_streaming_via'),
+          this.currentTransport.length > 0 ? this.currentTransport : 'TCP')
         this.startStatsTimer()
         this.stopProbeTimer()
         Prefs.save({ host: this.host, port: this.port } as SavedConnection)
@@ -445,11 +459,11 @@ struct Index {
         this.streamWidth = 0
         this.streamHeight = 0
         if (this.userInitiatedDisconnect) {
-          this.status = 'Disconnected'
+          this.status = I18n.s($r('app.string.status_disconnected'))
           this.userInitiatedDisconnect = false
           this.startProbeTimer()
         } else {
-          this.status = `Disconnected: ${reason}`
+          this.status = I18n.s($r('app.string.status_disconnected_reason'), reason)
           this.scheduleReconnect()
         }
       },
@@ -457,7 +471,8 @@ struct Index {
         const dimsChanged = (w !== this.streamWidth || h !== this.streamHeight)
         this.streamWidth = w
         this.streamHeight = h
-        this.status = 'Streaming'
+        this.status = I18n.s($r('app.string.status_streaming_via'),
+          this.currentTransport.length > 0 ? this.currentTransport : 'TCP')
         if (this.decoderRunning && dimsChanged) {
           console.info(TAG, `displayConfig dims changed → restart decoder`)
           nativeStop()
@@ -496,7 +511,7 @@ struct Index {
     if (ok) {
       this.decoderRunning = true
     } else {
-      this.lastError = 'Decoder start failed (see hilog ssn_native)'
+      this.lastError = I18n.s($r('app.string.err_decoder_start'))
     }
   }
 
@@ -520,7 +535,7 @@ struct Index {
     candidates.push({ host: '127.0.0.1', port: 8888, label: 'USB' })
 
     // 2) mDNS scan（3 秒）
-    this.status = 'Scanning local network…'
+    this.status = I18n.s($r('app.string.status_scanning'))
     try {
       const ctx = getContext(this) as common.UIAbilityContext
       const found = await discoverSideScreen(ctx, 3000)
@@ -559,10 +574,10 @@ struct Index {
       const c = candidates[i]
       if (this.userInitiatedDisconnect) {
         this.connecting = false
-        this.status = 'Cancelled'
+        this.status = I18n.s($r('app.string.status_cancelled'))
         return
       }
-      this.status = `Trying ${c.label}: ${c.host}:${c.port}…`
+      this.status = I18n.s($r('app.string.status_trying'), c.label, c.host, c.port)
       try {
         const probe = await this.probeServer(c.host, c.port)
         if (probe.isSideScreen) {
@@ -570,7 +585,7 @@ struct Index {
           this.host = c.host
           this.port = c.port
           this.currentTransport = c.label
-          this.status = `Connecting via ${c.label}…`
+          this.status = I18n.s($r('app.string.status_connecting_via'), c.label)
           this.connecting = false  // doConnect 会重新设
           await this.doConnect(false)
           return
@@ -580,10 +595,10 @@ struct Index {
 
     // 都不通
     this.connecting = false
-    this.status = 'No SideScreen found'
+    this.status = I18n.s($r('app.string.status_no_screen'))
     this.lastError = candidates.length > 0
-      ? `Tried ${candidates.length} target(s), none reachable`
-      : 'No targets to try'
+      ? I18n.s($r('app.string.status_no_screen_tried'), candidates.length)
+      : I18n.s($r('app.string.status_no_targets'))
     if (fromReconnect && this.reconnectAttempts < RECONNECT_DELAYS_MS.length) {
       // reconnect 循环中,继续重试
       this.scheduleReconnect()
@@ -599,7 +614,7 @@ struct Index {
 
   private async doConnect(fromReconnect: boolean = false): Promise<void> {
     if (this.host.length === 0) {
-      this.lastError = 'Host required'
+      this.lastError = I18n.s($r('app.string.err_host_required'))
       return
     }
     this.lastError = ''
@@ -616,7 +631,7 @@ struct Index {
     this.streamHeight = 0
     this.connecting = true
     this.userInitiatedDisconnect = false
-    this.status = `Connecting ${this.host}:${this.port}…`
+    this.status = I18n.s($r('app.string.status_connecting_via'), `${this.host}:${this.port}`)
     this.stopProbeTimer()
 
     this.client = new StreamClient(this.buildCallbacks())
@@ -626,7 +641,7 @@ struct Index {
       const err = e as Error
       this.connecting = false
       this.connected = false
-      this.status = 'Connect failed'
+      this.status = I18n.s($r('app.string.status_connect_failed'))
       this.lastError = err.message
       this.client = null
       if (!this.userInitiatedDisconnect) {
@@ -653,7 +668,7 @@ struct Index {
     this.streamWidth = 0
     this.streamHeight = 0
     this.currentTransport = ''
-    this.status = 'Disconnected'
+    this.status = I18n.s($r('app.string.status_disconnected'))
     this.showSettings = false
     this.startProbeTimer()
   }
@@ -699,7 +714,7 @@ struct Index {
 
     // toast 居中,自动 2s 消失
     promptAction.showToast({
-      message: 'Switching to USB…',
+      message: $r('app.string.status_switching_usb'),
       duration: 1500,
       bottom: 'center',  // HarmonyOS toast 默认底部,设为 center 居中
     })
@@ -741,14 +756,15 @@ struct Index {
 
   private scheduleReconnect(): void {
     if (this.reconnectAttempts >= RECONNECT_DELAYS_MS.length) {
-      this.status = `Failed after ${RECONNECT_DELAYS_MS.length} retries`
+      this.status = I18n.s($r('app.string.status_failed_after'), RECONNECT_DELAYS_MS.length)
       this.reconnectAttempts = 0
       this.startProbeTimer()
       return
     }
     const delay = RECONNECT_DELAYS_MS[this.reconnectAttempts]
     this.reconnectAttempts = this.reconnectAttempts + 1
-    this.status = `Retry ${this.reconnectAttempts}/${RECONNECT_DELAYS_MS.length} in ${delay / 1000}s…`
+    this.status = I18n.s($r('app.string.status_retry_in'),
+      this.reconnectAttempts, RECONNECT_DELAYS_MS.length, delay / 1000)
     this.reconnectTimer = setTimeout((): void => {
       this.reconnectTimer = -1
       // 走 autoConnect — USB 拔掉时会自动 fall back 到 mDNS / Wi-Fi
@@ -893,7 +909,7 @@ struct Index {
   ConnectionChecklist() {
     Column() {
       Row() {
-        Text('Available Targets')
+        Text($r('app.string.targets_header'))
           .fontSize(14).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT).layoutWeight(1)
         Text(`${this.reachableTargets.length}`)
           .fontSize(12).fontColor(COLOR_HINT)
@@ -902,7 +918,7 @@ struct Index {
       if (this.reachableTargets.length === 0) {
         Row() {
           Circle({ width: 10, height: 10 }).fill(COLOR_BAD).margin({ right: 10 })
-          Text('Searching… (USB / mDNS / saved)')
+          Text($r('app.string.targets_searching'))
             .fontSize(13).fontColor(COLOR_BBB).layoutWeight(1)
         }.width('100%').padding({ top: 4, bottom: 4 }).alignItems(VerticalAlign.Center)
       } else {
@@ -923,7 +939,7 @@ struct Index {
                   .fontSize(13).fontColor(COLOR_BBB).layoutWeight(1)
               }.width('100%')
               if (idx === 0) {
-                Text('Connect will use this').fontSize(11).fontColor(COLOR_OK)
+                Text($r('app.string.targets_primary_hint')).fontSize(11).fontColor(COLOR_OK)
               } else if (t.serviceName.length > 0) {
                 Text(t.serviceName).fontSize(11).fontColor(COLOR_DIM)
               }
@@ -951,14 +967,14 @@ struct Index {
         .width(80).height(80).borderRadius(40).backgroundColor('#1A2A4A')
         .margin({ bottom: 24 })
 
-        Text('Side Screen').fontSize(28).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
+        Text($r('app.string.title_main')).fontSize(28).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
           .margin({ bottom: 8 })
-        Text('Turn your tablet into a second display')
+        Text($r('app.string.subtitle_main'))
           .fontSize(14).fontColor(COLOR_SUBTEXT).margin({ bottom: 24 })
 
         this.ConnectionChecklist()
 
-        Button(this.connecting ? 'Connecting…' : 'Connect')
+        Button(this.connecting ? $r('app.string.btn_connecting') : $r('app.string.btn_connect'))
           .width('100%').height(60).fontSize(18).fontWeight(FontWeight.Bold)
           .fontColor(COLOR_TEXT).backgroundColor(COLOR_PRIMARY).borderRadius(20)
           .enabled(!this.connecting)
@@ -981,14 +997,14 @@ struct Index {
 
         if (this.advancedExpanded) {
           Column({ space: 12 }) {
-            TextInput({ placeholder: 'Host', text: this.host })
+            TextInput({ placeholder: $r('app.string.ph_host'), text: this.host })
               .placeholderColor(COLOR_DIM).fontColor(COLOR_TEXT)
               .backgroundColor(COLOR_INPUT_BG).borderRadius(12).height(48)
               .padding({ left: 16, right: 16 }).enabled(!this.connecting)
               .onChange((v: string): void => {
                 this.host = v.trim()
               })
-            TextInput({ placeholder: 'Port', text: this.port.toString() })
+            TextInput({ placeholder: $r('app.string.ph_port'), text: this.port.toString() })
               .type(InputType.Number).placeholderColor(COLOR_DIM).fontColor(COLOR_TEXT)
               .backgroundColor(COLOR_INPUT_BG).borderRadius(12).height(48)
               .padding({ left: 16, right: 16 }).enabled(!this.connecting)
@@ -999,7 +1015,7 @@ struct Index {
           }.width('100%').margin({ top: 4 })
         }
 
-        Text(this.advancedExpanded ? 'Hide Advanced' : 'Advanced Settings')
+        Text(this.advancedExpanded ? $r('app.string.hide_advanced') : $r('app.string.show_advanced'))
           .fontSize(13).fontColor(COLOR_PRIMARY).margin({ top: 8 }).padding(8)
           .onClick((): void => {
             this.advancedExpanded = !this.advancedExpanded
@@ -1094,50 +1110,50 @@ struct Index {
       // 设置卡片(scrollable)
       Scroll() {
         Column({ space: 16 }) {
-          Text('Display Settings').fontSize(28).fontWeight(FontWeight.Bold)
+          Text($r('app.string.settings_title')).fontSize(28).fontWeight(FontWeight.Bold)
             .fontColor(COLOR_TEXT).textAlign(TextAlign.Center).width('100%')
             .margin({ bottom: 8 })
 
           // Stats 浮层各列单独开关（全 false 时浮层隐藏）
           Column() {
-            Text('Stats Overlay').fontSize(17).fontWeight(FontWeight.Bold)
+            Text($r('app.string.stats_overlay_title')).fontSize(17).fontWeight(FontWeight.Bold)
               .fontColor(COLOR_TEXT).margin({ bottom: 8 }).width('100%')
-            Text('Toggle each item; turn all off to hide overlay')
+            Text($r('app.string.stats_overlay_hint'))
               .fontSize(11).fontColor(COLOR_SUBTEXT).margin({ bottom: 12 }).width('100%')
 
             this.StatToggleRow({
-              label: 'NET',
-              hint: 'Current transport (USB / mDNS / …)',
+              label: $r('app.string.stats_net_label'),
+              hint: $r('app.string.stats_net_hint'),
               isOn: this.showTransport,
               onChange: (v: boolean): void => { this.showTransport = v; this.persistUi() },
             })
             this.StatToggleRow({
-              label: 'FPS',
-              hint: 'Frames per second',
+              label: $r('app.string.stats_fps_label'),
+              hint: $r('app.string.stats_fps_hint'),
               isOn: this.showFps,
               onChange: (v: boolean): void => { this.showFps = v; this.persistUi() },
             })
             this.StatToggleRow({
-              label: 'BITRATE',
-              hint: 'Mbps',
+              label: $r('app.string.stats_bitrate_label'),
+              hint: $r('app.string.stats_bitrate_hint'),
               isOn: this.showBitrate,
               onChange: (v: boolean): void => { this.showBitrate = v; this.persistUi() },
             })
             this.StatToggleRow({
-              label: 'RESOLUTION',
-              hint: 'Mac display W×H',
+              label: $r('app.string.stats_resolution_label'),
+              hint: $r('app.string.stats_resolution_hint'),
               isOn: this.showResolution,
               onChange: (v: boolean): void => { this.showResolution = v; this.persistUi() },
             })
             this.StatToggleRow({
-              label: 'RTT',
-              hint: 'Round-trip latency',
+              label: $r('app.string.stats_rtt_label'),
+              hint: $r('app.string.stats_rtt_hint'),
               isOn: this.showRtt,
               onChange: (v: boolean): void => { this.showRtt = v; this.persistUi() },
             })
             this.StatToggleRow({
-              label: 'BAT',
-              hint: 'MatePad battery level',
+              label: $r('app.string.stats_battery_label'),
+              hint: $r('app.string.stats_battery_hint'),
               isOn: this.showBattery,
               onChange: (v: boolean): void => { this.showBattery = v; this.persistUi() },
             })
@@ -1148,7 +1164,7 @@ struct Index {
           // Opacity
           Column() {
             Row() {
-              Text('Overlay Opacity').fontSize(17).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
+              Text($r('app.string.opacity_title')).fontSize(17).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
                 .layoutWeight(1)
               Text(`${Math.round(this.overlayOpacity * 100)}%`)
                 .fontSize(15).fontColor(COLOR_OK)
@@ -1170,7 +1186,7 @@ struct Index {
 
           // 8-pos picker
           Column() {
-            Text('Settings Button Position').fontSize(17).fontWeight(FontWeight.Bold)
+            Text($r('app.string.pos_title')).fontSize(17).fontWeight(FontWeight.Bold)
               .fontColor(COLOR_TEXT).margin({ bottom: 12 })
             Row({ space: 6 }) {
               this.PosButton({ arrow: '↖', pos: 3 })
@@ -1194,16 +1210,16 @@ struct Index {
           // Saved Locations
           Column() {
             Row() {
-              Text('Saved Locations').fontSize(17).fontWeight(FontWeight.Bold)
+              Text($r('app.string.saved_title')).fontSize(17).fontWeight(FontWeight.Bold)
                 .fontColor(COLOR_TEXT).layoutWeight(1)
               Text(`${this.presets.length}`).fontSize(13).fontColor(COLOR_HINT)
             }.width('100%').margin({ bottom: 8 })
 
-            Text('Auto-saved on every successful connection. Used as fallback when USB/mDNS fail.')
+            Text($r('app.string.saved_hint'))
               .fontSize(11).fontColor(COLOR_SUBTEXT).margin({ bottom: 12 }).width('100%')
 
             if (this.presets.length === 0) {
-              Text('No saved locations yet')
+              Text($r('app.string.saved_empty'))
                 .fontSize(13).fontColor(COLOR_DIM).width('100%').textAlign(TextAlign.Center)
                 .padding({ top: 8, bottom: 8 })
             } else {
@@ -1231,7 +1247,7 @@ struct Index {
           .alignItems(HorizontalAlign.Start)
 
           // Disconnect (red)
-          Button('Disconnect')
+          Button($r('app.string.btn_disconnect'))
             .width('100%').height(48).fontSize(13).fontColor(COLOR_BAD)
             .backgroundColor('#1AFF453A').borderRadius(14)
             .borderColor(COLOR_BAD).borderWidth(1)
@@ -1242,8 +1258,17 @@ struct Index {
               })
             })
 
+          // About (轻量、灰底)
+          Button($r('app.string.btn_about'))
+            .width('100%').height(44).fontSize(13).fontColor(COLOR_BBB)
+            .backgroundColor('transparent').borderRadius(14)
+            .borderColor('#33FFFFFF').borderWidth(1)
+            .onClick((): void => {
+              this.showAbout = true
+            })
+
           // DONE (big green)
-          Button('DONE')
+          Button($r('app.string.btn_done'))
             .width('100%').height(56).fontSize(16).fontWeight(FontWeight.Bold)
             .fontColor(COLOR_TEXT).backgroundColor(COLOR_OK).borderRadius(16)
             .onClick((): void => {
@@ -1258,6 +1283,79 @@ struct Index {
       .width('86%').constraintSize({ maxHeight: '85%' })
       .scrollBar(BarState.Auto)
       // 阻止背景的 onClick 穿透关闭
+      .onClick((): void => { /* eat */ })
+    }
+    .width('100%').height('100%')
+  }
+
+  @Builder
+  AboutModal() {
+    Stack({ alignContent: Alignment.Center }) {
+      // dim 背景,点空白处关闭
+      Column().width('100%').height('100%').backgroundColor('#80000000')
+        .onClick((): void => { this.showAbout = false })
+
+      Scroll() {
+        Column({ space: 16 }) {
+          Text($r('app.string.about_title'))
+            .fontSize(28).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
+            .textAlign(TextAlign.Center).width('100%').margin({ bottom: 4 })
+
+          Text($r('app.string.app_name'))
+            .fontSize(18).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
+            .textAlign(TextAlign.Center).width('100%')
+
+          Text($r('app.string.about_tagline'))
+            .fontSize(13).fontColor(COLOR_SUBTEXT)
+            .textAlign(TextAlign.Center).width('100%').margin({ bottom: 8 })
+
+          // 版本信息
+          Row() {
+            Text($r('app.string.about_version_label'))
+              .fontSize(13).fontColor(COLOR_HINT).layoutWeight(1)
+            Text(this.appVersion.length > 0 ? this.appVersion : '—')
+              .fontSize(13).fontColor(COLOR_TEXT)
+          }.width('100%').padding(16).backgroundColor(COLOR_PANEL_BG).borderRadius(12)
+
+          // 源代码链接
+          Column() {
+            Text($r('app.string.about_source_label'))
+              .fontSize(13).fontColor(COLOR_HINT).width('100%').margin({ bottom: 4 })
+            Text(SOURCE_URL)
+              .fontSize(13).fontColor(COLOR_PRIMARY).width('100%')
+              .copyOption(CopyOptions.LocalDevice)
+          }
+          .padding(16).backgroundColor(COLOR_PANEL_BG).borderRadius(12).width('100%')
+          .alignItems(HorizontalAlign.Start)
+
+          // 开源致谢
+          Column({ space: 12 }) {
+            Text($r('app.string.about_open_source_title'))
+              .fontSize(15).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
+              .width('100%').margin({ bottom: 4 })
+
+            Text($r('app.string.about_credit_sidescreen'))
+              .fontSize(12).fontColor(COLOR_BBB).width('100%').lineHeight(18)
+            Text($r('app.string.about_credit_hdc'))
+              .fontSize(12).fontColor(COLOR_BBB).width('100%').lineHeight(18)
+            Text($r('app.string.about_credit_libusb'))
+              .fontSize(12).fontColor(COLOR_BBB).width('100%').lineHeight(18)
+          }
+          .padding(16).backgroundColor(COLOR_PANEL_BG).borderRadius(12).width('100%')
+          .alignItems(HorizontalAlign.Start)
+
+          Button($r('app.string.about_close'))
+            .width('100%').height(48).fontSize(15).fontWeight(FontWeight.Bold)
+            .fontColor(COLOR_TEXT).backgroundColor(COLOR_OK).borderRadius(14)
+            .onClick((): void => { this.showAbout = false })
+        }
+        .padding(28)
+        .backgroundColor(COLOR_CARD)
+        .borderRadius(28)
+        .width('100%')
+      }
+      .width('86%').constraintSize({ maxHeight: '85%' })
+      .scrollBar(BarState.Auto)
       .onClick((): void => { /* eat */ })
     }
     .width('100%').height('100%')
@@ -1310,6 +1408,11 @@ struct Index {
       // Settings Modal（始终在最上层,只在 showSettings 时渲染）
       if (this.showSettings) {
         this.SettingsModal()
+      }
+
+      // About Modal（叠在 Settings 之上）
+      if (this.showAbout) {
+        this.AboutModal()
       }
     }
     .width('100%').height('100%')

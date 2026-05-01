@@ -1,16 +1,77 @@
 {
   "string": [
-    {
-      "name": "module_desc",
-      "value": "module description"
-    },
-    {
-      "name": "EntryAbility_desc",
-      "value": "description"
-    },
-    {
-      "name": "EntryAbility_label",
-      "value": "label"
-    }
+    { "name": "module_desc", "value": "Side Screen NEXT module" },
+    { "name": "EntryAbility_desc", "value": "Use your MatePad as a Mac second display" },
+    { "name": "EntryAbility_label", "value": "Side Screen NEXT" },
+
+    { "name": "title_main", "value": "Side Screen" },
+    { "name": "subtitle_main", "value": "Turn your tablet into a second display" },
+    { "name": "btn_connect", "value": "Connect" },
+    { "name": "btn_connecting", "value": "Connecting…" },
+    { "name": "ph_host_help", "value": "Host (USB: 127.0.0.1)" },
+    { "name": "ph_host", "value": "Host" },
+    { "name": "ph_port", "value": "Port" },
+    { "name": "show_advanced", "value": "Advanced Settings" },
+    { "name": "hide_advanced", "value": "Hide Advanced" },
+
+    { "name": "targets_header", "value": "Available Targets" },
+    { "name": "targets_searching", "value": "Searching… (USB / mDNS / saved)" },
+    { "name": "targets_primary_hint", "value": "Connect will use this" },
+
+    { "name": "status_ready", "value": "Ready to connect" },
+    { "name": "status_disconnected", "value": "Disconnected" },
+    { "name": "status_searching", "value": "Searching for SideScreen…" },
+    { "name": "status_scanning", "value": "Scanning local network…" },
+    { "name": "status_targets_available", "value": "%d target(s) available" },
+    { "name": "status_streaming_via", "value": "Streaming via %s" },
+    { "name": "status_connecting_via", "value": "Connecting via %s…" },
+    { "name": "status_trying", "value": "Trying %s: %s:%d…" },
+    { "name": "status_no_screen", "value": "No SideScreen found" },
+    { "name": "status_no_screen_tried", "value": "Tried %d target(s), none reachable" },
+    { "name": "status_no_targets", "value": "No targets to try" },
+    { "name": "status_waiting_config", "value": "Waiting for display config…" },
+    { "name": "status_switching_usb", "value": "Switching to USB…" },
+    { "name": "status_connect_failed", "value": "Connect failed" },
+    { "name": "status_disconnected_reason", "value": "Disconnected: %s" },
+    { "name": "status_retry_in", "value": "Retry %d/%d in %ds…" },
+    { "name": "status_failed_after", "value": "Failed after %d retries" },
+    { "name": "status_cancelled", "value": "Cancelled" },
+
+    { "name": "err_host_required", "value": "Host required" },
+    { "name": "err_decoder_start", "value": "Decoder start failed (see hilog ssn_native)" },
+
+    { "name": "settings_title", "value": "Display Settings" },
+    { "name": "stats_overlay_title", "value": "Stats Overlay" },
+    { "name": "stats_overlay_hint", "value": "Toggle each item; turn all off to hide overlay" },
+    { "name": "stats_net_label", "value": "NET" },
+    { "name": "stats_net_hint", "value": "Current transport (USB / mDNS / …)" },
+    { "name": "stats_fps_label", "value": "FPS" },
+    { "name": "stats_fps_hint", "value": "Frames per second" },
+    { "name": "stats_bitrate_label", "value": "BITRATE" },
+    { "name": "stats_bitrate_hint", "value": "Mbps" },
+    { "name": "stats_resolution_label", "value": "RESOLUTION" },
+    { "name": "stats_resolution_hint", "value": "Mac display W × H" },
+    { "name": "stats_rtt_label", "value": "RTT" },
+    { "name": "stats_rtt_hint", "value": "Round-trip latency" },
+    { "name": "stats_battery_label", "value": "BAT" },
+    { "name": "stats_battery_hint", "value": "MatePad battery level" },
+    { "name": "opacity_title", "value": "Overlay Opacity" },
+    { "name": "pos_title", "value": "Settings Button Position" },
+    { "name": "saved_title", "value": "Saved Locations" },
+    { "name": "saved_hint", "value": "Auto-saved on every successful connection. Used as fallback when USB/mDNS fail." },
+    { "name": "saved_empty", "value": "No saved locations yet" },
+    { "name": "btn_disconnect", "value": "Disconnect" },
+    { "name": "btn_done", "value": "DONE" },
+    { "name": "btn_about", "value": "About" },
+
+    { "name": "about_title", "value": "About" },
+    { "name": "about_tagline", "value": "Use your MatePad as a Mac second display." },
+    { "name": "about_version_label", "value": "Version" },
+    { "name": "about_open_source_title", "value": "Open Source Acknowledgements" },
+    { "name": "about_credit_sidescreen", "value": "Side Screen (Mac host) — MIT License © Tran Vuong Quoc Dat. The Mac-side capture pipeline and wire protocol of this app are derived from the upstream project." },
+    { "name": "about_credit_hdc", "value": "hdc — Apache License 2.0 © OpenHarmony. The Mac host bundles the open-source hdc binary for USB tunneling." },
+    { "name": "about_credit_libusb", "value": "libusb — LGPL 2.1. Bundled by hdc for USB device access." },
+    { "name": "about_source_label", "value": "Source code" },
+    { "name": "about_close", "value": "Close" }
   ]
 }

@@ -11,11 +11,12 @@
 
 import { common } from '@kit.AbilityKit'
 import { batteryInfo } from '@kit.BasicServicesKit'
-import { display } from '@kit.ArkUI'
+import { display, promptAction } from '@kit.ArkUI'
 import { socket } from '@kit.NetworkKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { StreamClient, StreamClientCallbacks } from '../net/StreamClient'
-import { Prefs, SavedConnection, SavedUiPrefs } from '../util/Prefs'
+import { Prefs, SavedConnection, SavedUiPrefs, Preset } from '../util/Prefs'
+import { discoverSideScreen, DiscoveredService } from '../util/MdnsDiscovery'
 import { nativeStart, nativePush, nativeStop, nativeIsReady } from 'libentry.so'
 
 const TAG: string = '[Index]'
@@ -40,6 +41,8 @@ const COLOR_RTT: string = '#E91E63'
 const COLOR_BAT: string = '#9C27B0'
 const COLOR_BAT_LOW: string = '#FF453A'
 const COLOR_BAT_CHG: string = '#4CAF50'
+const COLOR_NET_USB: string = '#26C6DA'    // 青 — USB 通道
+const COLOR_NET_WIFI: string = '#7E57C2'   // 紫 — Wi-Fi/mDNS 通道
 const COLOR_ERR: string = '#FF453A'
 const COLOR_OK: string = '#4CAF50'
 const COLOR_BAD: string = '#FF453A'
@@ -60,6 +63,28 @@ interface ChecklistItemParams {
 interface PosButtonParams {
   arrow: string
   pos: number
+}
+
+interface ConnectCandidate {
+  host: string
+  port: number
+  /** 'USB' / 'mDNS' / 'Saved' / 'Manual' — 只用于 status 文案 */
+  label: string
+}
+
+interface ReachableTarget {
+  host: string
+  port: number
+  label: string
+  /** mDNS 服务名称(只对 'mDNS' label 有意义,其他空字符串) */
+  serviceName: string
+}
+
+interface StatToggleParams {
+  label: string
+  hint: string
+  isOn: boolean
+  onChange: (v: boolean) => void
 }
 
 @Entry
@@ -97,14 +122,26 @@ struct Index {
 
   // ---- UI 偏好（持久化）----
   @State showSettings: boolean = false  // settings modal
-  @State showStats: boolean = true
+  @State showTransport: boolean = true
+  @State showFps: boolean = true
+  @State showBitrate: boolean = true
+  @State showResolution: boolean = true
+  @State showRtt: boolean = true
+  @State showBattery: boolean = true
   @State overlayOpacity: number = 0.8
   @State settingsBtnPos: number = 0     // 0=BR / 1=BL / 2=TR / 3=TL / 4=TC / 5=BC / 6=CL / 7=CR
 
-  // ---- Connection Checklist 探测 ----
-  @State serverReachable: boolean = false
-  @State serverIsSideScreen: boolean = false
+  // ---- Connection Checklist:实时发现的所有可达目标(USB / mDNS / 已保存预设)----
+  @State reachableTargets: ReachableTarget[] = []
   private probeTimer: number = -1
+  private discoveryInProgress: boolean = false
+
+  // ---- 已保存预设（list 用 @State 让 settings modal 实时刷新）----
+  @State presets: Preset[] = []
+
+  // ---- 当前传输通道（'USB'/'mDNS'/'Saved'/'Manual'）+ USB 上线监视 ----
+  @State currentTransport: string = ''
+  private usbWatchTimer: number = -1
 
   private client: StreamClient | null = null
 
@@ -132,11 +169,20 @@ struct Index {
         if (cfg.port > 0) this.port = cfg.port
         return Prefs.loadUi()
       })
-      .then((ui: SavedUiPrefs): void => {
-        this.showStats = ui.showStats
+      .then((ui: SavedUiPrefs): Promise<Preset[]> => {
+        this.showTransport = ui.showTransport
+        this.showFps = ui.showFps
+        this.showBitrate = ui.showBitrate
+        this.showResolution = ui.showResolution
+        this.showRtt = ui.showRtt
+        this.showBattery = ui.showBattery
         this.overlayOpacity = ui.overlayOpacity
         this.settingsBtnPos = ui.settingsBtnPos
-        console.info(TAG, `prefs: stats=${ui.showStats} opacity=${ui.overlayOpacity} btnPos=${ui.settingsBtnPos}`)
+        return Prefs.loadPresets()
+      })
+      .then((list: Preset[]): void => {
+        this.presets = list
+        console.info(TAG, `presets loaded: ${list.length}`)
         this.startProbeTimer()
       })
       .catch((e: Error): void => {
@@ -158,6 +204,7 @@ struct Index {
 
   aboutToDisappear(): void {
     this.stopProbeTimer()
+    this.stopUsbWatch()
     if (this.batteryTimer >= 0) {
       clearInterval(this.batteryTimer)
       this.batteryTimer = -1
@@ -238,9 +285,9 @@ struct Index {
 
   private startProbeTimer(): void {
     this.stopProbeTimer()
-    this.runProbe()
+    this.discoverAllTargets()
     this.probeTimer = setInterval((): void => {
-      this.runProbe()
+      this.discoverAllTargets()
     }, PROBE_INTERVAL_MS)
   }
 
@@ -251,17 +298,61 @@ struct Index {
     }
   }
 
-  private async runProbe(): Promise<void> {
-    // 已连接 / 正在连接时不探测,避免抢占真实连接（Mac handleConnection 会替换 clientFd）
+  /** 全网扫描:USB + mDNS + 已保存预设,所有可达目标都列出来。
+   *  顺序与 doAutoConnect 一致 — 列表第 1 个就是 Connect 会用的优先目标。 */
+  private async discoverAllTargets(): Promise<void> {
+    if (this.discoveryInProgress) return
     if (this.connected || this.connecting) return
-    if (this.host.length === 0) return
+    this.discoveryInProgress = true
+
+    const found: ReachableTarget[] = []
     try {
-      const result = await this.probeServer(this.host, this.port)
-      this.serverReachable = result.reachable
-      this.serverIsSideScreen = result.isSideScreen
-    } catch (e) {
-      this.serverReachable = false
-      this.serverIsSideScreen = false
+      // 1) USB(127.0.0.1:8888)
+      const usb = await this.probeServer('127.0.0.1', 8888)
+      if (usb.isSideScreen) {
+        found.push({ host: '127.0.0.1', port: 8888, label: 'USB', serviceName: '' })
+      }
+
+      // 2) mDNS 扫描(3s)
+      try {
+        const ctx = getContext(this) as common.UIAbilityContext
+        const services = await discoverSideScreen(ctx, 3000)
+        for (let i = 0; i < services.length; i++) {
+          const svc = services[i]
+          // 跳过和 USB 重复（loopback IP 不会撞，但保险起见）
+          const dup = found.some((t: ReachableTarget): boolean =>
+            t.host === svc.host && t.port === svc.port)
+          if (!dup) {
+            found.push({ host: svc.host, port: svc.port, label: 'mDNS', serviceName: svc.serviceName })
+          }
+        }
+      } catch (_) { /* mDNS 失败不影响其他探测 */ }
+
+      // 3) 已保存预设(只 probe 不在前两步里的)
+      for (let i = 0; i < this.presets.length; i++) {
+        const p = this.presets[i]
+        const dup = found.some((t: ReachableTarget): boolean =>
+          t.host === p.host && t.port === p.port)
+        if (dup) continue
+        try {
+          const r = await this.probeServer(p.host, p.port)
+          if (r.isSideScreen) {
+            found.push({ host: p.host, port: p.port, label: 'Saved', serviceName: '' })
+          }
+        } catch (_) { /* skip */ }
+      }
+
+      this.reachableTargets = found
+      // 闲置时根据扫描结果更新状态文案,避免 "Scanning…" 卡死
+      if (!this.connected && !this.connecting && this.reconnectAttempts === 0) {
+        if (found.length > 0) {
+          this.status = `${found.length} target${found.length > 1 ? 's' : ''} available`
+        } else {
+          this.status = 'Searching for SideScreen…'
+        }
+      }
+    } finally {
+      this.discoveryInProgress = false
     }
   }
 
@@ -319,21 +410,34 @@ struct Index {
         this.connected = true
         this.reconnectAttempts = 0
         this.lastError = ''
-        this.status = 'Waiting for display config…'
+        this.status = `Streaming via ${this.currentTransport || 'TCP'}`
         this.startStatsTimer()
         this.stopProbeTimer()
         Prefs.save({ host: this.host, port: this.port } as SavedConnection)
           .catch((e: Error): void => console.warn(TAG, `prefs.save: ${e.message}`))
+        // 把成功的 host upsert 到预设列表（127.0.0.1 是 USB 通道，不存）
+        if (this.host !== '127.0.0.1' && this.host !== 'localhost') {
+          Prefs.upsertPreset({ host: this.host, port: this.port } as Preset)
+            .then((updated: Preset[]): void => { this.presets = updated })
+            .catch((e: Error): void => console.warn(TAG, `upsertPreset: ${e.message}`))
+        }
         const deg = this.currentRotationDegrees()
         this.lastSentRotationDeg = deg
         if (this.client != null) {
           this.client.sendRotation(deg)
+        }
+        // 非 USB 时启动 USB 上线监视器,插数据线时自动升级到有线
+        if (this.currentTransport !== 'USB') {
+          this.startUsbWatch()
+        } else {
+          this.stopUsbWatch()
         }
       },
       onDisconnected: (reason: string): void => {
         this.connecting = false
         this.connected = false
         this.stopStatsTimer()
+        this.stopUsbWatch()
         if (this.decoderRunning) {
           nativeStop()
           this.decoderRunning = false
@@ -397,6 +501,99 @@ struct Index {
   }
 
   // ============================================================================
+  // Auto Connect: USB → mDNS → 已保存预设 → 手动 host
+  // ============================================================================
+
+  private async doAutoConnect(fromReconnect: boolean = false): Promise<void> {
+    if (this.connecting || this.connected) return
+    this.lastError = ''
+    this.connecting = true
+    this.userInitiatedDisconnect = false
+    if (!fromReconnect) {
+      this.cancelReconnect()
+    }
+    this.stopProbeTimer()
+
+    const candidates: ConnectCandidate[] = []
+
+    // 1) USB（hdc rport tunnel 时本地回环最快）
+    candidates.push({ host: '127.0.0.1', port: 8888, label: 'USB' })
+
+    // 2) mDNS scan（3 秒）
+    this.status = 'Scanning local network…'
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext
+      const found = await discoverSideScreen(ctx, 3000)
+      for (let i = 0; i < found.length; i++) {
+        const svc = found[i]
+        candidates.push({ host: svc.host, port: svc.port, label: 'mDNS' })
+      }
+    } catch (e) {
+      console.warn(TAG, `mdns scan failed: ${(e as Error).message}`)
+    }
+
+    // 3) 已保存预设
+    for (let i = 0; i < this.presets.length; i++) {
+      const p = this.presets[i]
+      // 已经在 candidates 里(USB/mDNS hit) 不再重复
+      const dup = candidates.some((c: ConnectCandidate): boolean =>
+        c.host === p.host && c.port === p.port)
+      if (!dup) {
+        candidates.push({ host: p.host, port: p.port, label: 'Saved' })
+      }
+    }
+
+    // 4) 手动输入的 host（advanced settings 里）
+    if (this.host.length > 0 && this.host !== '127.0.0.1' && this.host !== 'localhost') {
+      const dup = candidates.some((c: ConnectCandidate): boolean =>
+        c.host === this.host && c.port === this.port)
+      if (!dup) {
+        candidates.push({ host: this.host, port: this.port, label: 'Manual' })
+      }
+    }
+
+    console.info(TAG, `autoConnect: ${candidates.length} candidates`)
+
+    // 用快速 probe（1s 超时 + 200ms 等首字节）逐个试
+    for (let i = 0; i < candidates.length; i++) {
+      const c = candidates[i]
+      if (this.userInitiatedDisconnect) {
+        this.connecting = false
+        this.status = 'Cancelled'
+        return
+      }
+      this.status = `Trying ${c.label}: ${c.host}:${c.port}…`
+      try {
+        const probe = await this.probeServer(c.host, c.port)
+        if (probe.isSideScreen) {
+          // 找到 — 真正连接
+          this.host = c.host
+          this.port = c.port
+          this.currentTransport = c.label
+          this.status = `Connecting via ${c.label}…`
+          this.connecting = false  // doConnect 会重新设
+          await this.doConnect(false)
+          return
+        }
+      } catch (_) { /* 跳过 */ }
+    }
+
+    // 都不通
+    this.connecting = false
+    this.status = 'No SideScreen found'
+    this.lastError = candidates.length > 0
+      ? `Tried ${candidates.length} target(s), none reachable`
+      : 'No targets to try'
+    if (fromReconnect && this.reconnectAttempts < RECONNECT_DELAYS_MS.length) {
+      // reconnect 循环中,继续重试
+      this.scheduleReconnect()
+    } else {
+      this.reconnectAttempts = 0
+      this.startProbeTimer()
+    }
+  }
+
+  // ============================================================================
   // Connect / disconnect / reconnect
   // ============================================================================
 
@@ -442,6 +639,7 @@ struct Index {
     this.userInitiatedDisconnect = true
     this.cancelReconnect()
     this.stopStatsTimer()
+    this.stopUsbWatch()
     if (this.decoderRunning) {
       nativeStop()
       this.decoderRunning = false
@@ -454,9 +652,91 @@ struct Index {
     this.connecting = false
     this.streamWidth = 0
     this.streamHeight = 0
+    this.currentTransport = ''
     this.status = 'Disconnected'
     this.showSettings = false
     this.startProbeTimer()
+  }
+
+  // ============================================================================
+  // USB watch — 在 Wi-Fi 连接时每 10s 探测 USB 隧道,插上数据线就自动升级到有线
+  // ============================================================================
+
+  private startUsbWatch(): void {
+    this.stopUsbWatch()
+    this.usbWatchTimer = setInterval((): void => {
+      this.checkUsbAvailable().catch((e: Error): void => {
+        console.warn(TAG, `usbWatch: ${e.message}`)
+      })
+    }, 10000)
+  }
+
+  private stopUsbWatch(): void {
+    if (this.usbWatchTimer >= 0) {
+      clearInterval(this.usbWatchTimer)
+      this.usbWatchTimer = -1
+    }
+  }
+
+  private async checkUsbAvailable(): Promise<void> {
+    if (!this.connected) return
+    if (this.connecting) return
+    if (this.currentTransport === 'USB') return
+    const probe = await this.probeServer('127.0.0.1', 8888)
+    if (!probe.isSideScreen) return
+    console.info(TAG, 'USB tunnel detected, upgrading from Wi-Fi to USB')
+    await this.switchToUsb()
+  }
+
+  /** 当前 Wi-Fi 连着,但 USB 也通了 → 切到 USB（更低延迟）。
+   *  关键：保留 connected/streamWidth/streamHeight @State,XComponent 不卸载,UI 不闪回连接页。
+   *  屏幕中间弹一个 toast 自动消失,新连接的 onDisplayConfig 会触发解码器重启。 */
+  private async switchToUsb(): Promise<void> {
+    if (!this.connected) return
+    this.stopUsbWatch()
+    this.cancelReconnect()
+    this.stopStatsTimer()
+
+    // toast 居中,自动 2s 消失
+    promptAction.showToast({
+      message: 'Switching to USB…',
+      duration: 1500,
+      bottom: 'center',  // HarmonyOS toast 默认底部,设为 center 居中
+    })
+
+    // 停 decoder（关键: 让 nativePush 别再喂老连接的尾帧到新 decoder）
+    if (this.decoderRunning) {
+      nativeStop()
+      this.decoderRunning = false
+    }
+    // 关掉旧 socket — disconnect() 会先 off events 再 close,不会触发 onDisconnected
+    if (this.client != null) {
+      try {
+        await this.client.disconnect()
+      } catch (_) { /* ignore */ }
+      this.client = null
+    }
+    // 注意: 不动 connected / streamWidth / streamHeight,XComponent 保持挂载
+
+    // 建新 client 连 USB
+    this.host = '127.0.0.1'
+    this.port = 8888
+    this.currentTransport = 'USB'
+    this.userInitiatedDisconnect = false
+    this.client = new StreamClient(this.buildCallbacks())
+    try {
+      await this.client.connect(this.host, this.port)
+      // 成功 — onConnected 已经把 status 更新为 "Streaming via USB",toast 还会自然消失
+    } catch (e) {
+      const err = e as Error
+      this.lastError = err.message
+      this.client = null
+      // USB 切换失败 → fall back: 走标准 reconnect cycle 找回 Wi-Fi
+      this.connected = false
+      this.streamWidth = 0
+      this.streamHeight = 0
+      this.scheduleReconnect()
+    }
   }
 
   private scheduleReconnect(): void {
@@ -471,7 +751,8 @@ struct Index {
     this.status = `Retry ${this.reconnectAttempts}/${RECONNECT_DELAYS_MS.length} in ${delay / 1000}s…`
     this.reconnectTimer = setTimeout((): void => {
       this.reconnectTimer = -1
-      this.doConnect(true).catch((e: Error): void => {
+      // 走 autoConnect — USB 拔掉时会自动 fall back 到 mDNS / Wi-Fi
+      this.doAutoConnect(true).catch((e: Error): void => {
         console.error(TAG, `reconnect: ${e.message}`)
       })
     }, delay)
@@ -521,10 +802,20 @@ struct Index {
 
   private persistUi(): void {
     Prefs.saveUi({
-      showStats: this.showStats,
+      showTransport: this.showTransport,
+      showFps: this.showFps,
+      showBitrate: this.showBitrate,
+      showResolution: this.showResolution,
+      showRtt: this.showRtt,
+      showBattery: this.showBattery,
       overlayOpacity: this.overlayOpacity,
       settingsBtnPos: this.settingsBtnPos,
     } as SavedUiPrefs).catch((e: Error): void => console.warn(TAG, `saveUi: ${e.message}`))
+  }
+
+  private hasAnyStat(): boolean {
+    return this.showTransport || this.showFps || this.showBitrate ||
+           this.showResolution || this.showRtt || this.showBattery
   }
 
   private posToAlignment(): Alignment {
@@ -569,6 +860,19 @@ struct Index {
   }
 
   @Builder
+  StatToggleRow($$: StatToggleParams) {
+    Row() {
+      Column() {
+        Text($$.label).fontSize(14).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
+        Text($$.hint).fontSize(11).fontColor(COLOR_SUBTEXT).margin({ top: 2 })
+      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+      Toggle({ type: ToggleType.Switch, isOn: $$.isOn })
+        .onChange((on: boolean): void => { $$.onChange(on) })
+    }
+    .width('100%').padding({ top: 6, bottom: 6 }).alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
   PosButton($$: PosButtonParams) {
     Button($$.arrow)
       .layoutWeight(1)
@@ -588,21 +892,45 @@ struct Index {
   @Builder
   ConnectionChecklist() {
     Column() {
-      Text('Connection Checklist')
-        .fontSize(14)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(COLOR_TEXT)
-        .margin({ bottom: 8 })
-        .width('100%')
+      Row() {
+        Text('Available Targets')
+          .fontSize(14).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT).layoutWeight(1)
+        Text(`${this.reachableTargets.length}`)
+          .fontSize(12).fontColor(COLOR_HINT)
+      }.width('100%').margin({ bottom: 8 })
 
-      this.ChecklistRow({
-        label: `Server reachable at ${this.host}:${this.port}`,
-        ok: this.serverReachable,
-      })
-      this.ChecklistRow({
-        label: 'Mac SideScreen ready',
-        ok: this.serverIsSideScreen,
-      })
+      if (this.reachableTargets.length === 0) {
+        Row() {
+          Circle({ width: 10, height: 10 }).fill(COLOR_BAD).margin({ right: 10 })
+          Text('Searching… (USB / mDNS / saved)')
+            .fontSize(13).fontColor(COLOR_BBB).layoutWeight(1)
+        }.width('100%').padding({ top: 4, bottom: 4 }).alignItems(VerticalAlign.Center)
+      } else {
+        ForEach(this.reachableTargets, (t: ReachableTarget, idx: number): void => {
+          Row() {
+            // 第 1 个实心绿,其他半透明
+            Circle({ width: 10, height: 10 })
+              .fill(idx === 0 ? COLOR_OK : '#664CAF50')
+              .margin({ right: 10 })
+            Column() {
+              Row() {
+                Text(t.label)
+                  .fontSize(13)
+                  .fontWeight(idx === 0 ? FontWeight.Bold : FontWeight.Normal)
+                  .fontColor(idx === 0 ? COLOR_OK : COLOR_TEXT)
+                  .margin({ right: 8 })
+                Text(`${t.host}:${t.port}`)
+                  .fontSize(13).fontColor(COLOR_BBB).layoutWeight(1)
+              }.width('100%')
+              if (idx === 0) {
+                Text('Connect will use this').fontSize(11).fontColor(COLOR_OK)
+              } else if (t.serviceName.length > 0) {
+                Text(t.serviceName).fontSize(11).fontColor(COLOR_DIM)
+              }
+            }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+          }.width('100%').padding({ top: 6, bottom: 6 }).alignItems(VerticalAlign.Top)
+        }, (t: ReachableTarget): string => `${t.host}:${t.port}`)
+      }
     }
     .padding(16)
     .backgroundColor(COLOR_PANEL_BG)
@@ -635,8 +963,8 @@ struct Index {
           .fontColor(COLOR_TEXT).backgroundColor(COLOR_PRIMARY).borderRadius(20)
           .enabled(!this.connecting)
           .onClick((): void => {
-            this.doConnect(false).catch((e: Error): void => {
-              console.error(TAG, `connect: ${e.message}`)
+            this.doAutoConnect().catch((e: Error): void => {
+              console.error(TAG, `autoConnect: ${e.message}`)
             })
           })
           .margin({ bottom: 16 })
@@ -686,32 +1014,49 @@ struct Index {
   @Builder
   StatsOverlay() {
     Row() {
-      this.StatColumn({
-        label: 'FPS',
-        value: this.fps > 0 ? this.fps.toFixed(0) : '—',
-        color: COLOR_FPS,
-      })
-      this.StatColumn({
-        label: 'BITRATE',
-        value: this.mbps > 0 ? `${this.mbps.toFixed(1)} M` : '—',
-        color: COLOR_BITRATE,
-      })
-      this.StatColumn({
-        label: 'RESOLUTION',
-        value: this.streamWidth > 0 ? `${this.streamWidth}×${this.streamHeight}` : '—',
-        color: COLOR_RES,
-      })
-      this.StatColumn({
-        label: 'RTT',
-        value: this.rttMs > 0 ? `${this.rttMs}ms` : '—',
-        color: COLOR_RTT,
-      })
-      this.StatColumn({
-        label: this.batteryCharging ? 'BAT⚡' : 'BAT',
-        value: this.batteryLevel >= 0 ? `${this.batteryLevel}%` : '—',
-        color: this.batteryCharging ? COLOR_BAT_CHG :
-               (this.batteryLevel >= 0 && this.batteryLevel <= 20 ? COLOR_BAT_LOW : COLOR_BAT),
-      })
+      if (this.showTransport) {
+        this.StatColumn({
+          label: 'NET',
+          value: this.currentTransport.length > 0 ? this.currentTransport : '—',
+          color: this.currentTransport === 'USB' ? COLOR_NET_USB : COLOR_NET_WIFI,
+        })
+      }
+      if (this.showFps) {
+        this.StatColumn({
+          label: 'FPS',
+          value: this.fps > 0 ? this.fps.toFixed(0) : '—',
+          color: COLOR_FPS,
+        })
+      }
+      if (this.showBitrate) {
+        this.StatColumn({
+          label: 'BITRATE',
+          value: this.mbps > 0 ? `${this.mbps.toFixed(1)} M` : '—',
+          color: COLOR_BITRATE,
+        })
+      }
+      if (this.showResolution) {
+        this.StatColumn({
+          label: 'RESOLUTION',
+          value: this.streamWidth > 0 ? `${this.streamWidth}×${this.streamHeight}` : '—',
+          color: COLOR_RES,
+        })
+      }
+      if (this.showRtt) {
+        this.StatColumn({
+          label: 'RTT',
+          value: this.rttMs > 0 ? `${this.rttMs}ms` : '—',
+          color: COLOR_RTT,
+        })
+      }
+      if (this.showBattery) {
+        this.StatColumn({
+          label: this.batteryCharging ? 'BAT⚡' : 'BAT',
+          value: this.batteryLevel >= 0 ? `${this.batteryLevel}%` : '—',
+          color: this.batteryCharging ? COLOR_BAT_CHG :
+                 (this.batteryLevel >= 0 && this.batteryLevel <= 20 ? COLOR_BAT_LOW : COLOR_BAT),
+        })
+      }
     }
     .padding({ top: 12, bottom: 12, left: 16, right: 16 })
     .backgroundColor(COLOR_OVERLAY)
@@ -753,21 +1098,52 @@ struct Index {
             .fontColor(COLOR_TEXT).textAlign(TextAlign.Center).width('100%')
             .margin({ bottom: 8 })
 
-          // Show Stats
-          Row() {
-            Column() {
-              Text('Show Stats').fontSize(17).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
-              Text('FPS, bitrate, resolution, RTT, battery')
-                .fontSize(13).fontColor(COLOR_SUBTEXT).margin({ top: 2 })
-            }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-            Toggle({ type: ToggleType.Switch, isOn: this.showStats })
-              .onChange((on: boolean): void => {
-                this.showStats = on
-                this.persistUi()
-              })
+          // Stats 浮层各列单独开关（全 false 时浮层隐藏）
+          Column() {
+            Text('Stats Overlay').fontSize(17).fontWeight(FontWeight.Bold)
+              .fontColor(COLOR_TEXT).margin({ bottom: 8 }).width('100%')
+            Text('Toggle each item; turn all off to hide overlay')
+              .fontSize(11).fontColor(COLOR_SUBTEXT).margin({ bottom: 12 }).width('100%')
+
+            this.StatToggleRow({
+              label: 'NET',
+              hint: 'Current transport (USB / mDNS / …)',
+              isOn: this.showTransport,
+              onChange: (v: boolean): void => { this.showTransport = v; this.persistUi() },
+            })
+            this.StatToggleRow({
+              label: 'FPS',
+              hint: 'Frames per second',
+              isOn: this.showFps,
+              onChange: (v: boolean): void => { this.showFps = v; this.persistUi() },
+            })
+            this.StatToggleRow({
+              label: 'BITRATE',
+              hint: 'Mbps',
+              isOn: this.showBitrate,
+              onChange: (v: boolean): void => { this.showBitrate = v; this.persistUi() },
+            })
+            this.StatToggleRow({
+              label: 'RESOLUTION',
+              hint: 'Mac display W×H',
+              isOn: this.showResolution,
+              onChange: (v: boolean): void => { this.showResolution = v; this.persistUi() },
+            })
+            this.StatToggleRow({
+              label: 'RTT',
+              hint: 'Round-trip latency',
+              isOn: this.showRtt,
+              onChange: (v: boolean): void => { this.showRtt = v; this.persistUi() },
+            })
+            this.StatToggleRow({
+              label: 'BAT',
+              hint: 'MatePad battery level',
+              isOn: this.showBattery,
+              onChange: (v: boolean): void => { this.showBattery = v; this.persistUi() },
+            })
           }
           .padding(16).backgroundColor(COLOR_PANEL_BG).borderRadius(12).width('100%')
-          .alignItems(VerticalAlign.Center)
+          .alignItems(HorizontalAlign.Start)
 
           // Opacity
           Column() {
@@ -811,6 +1187,45 @@ struct Index {
               this.PosButton({ arrow: '↓', pos: 5 })
               this.PosButton({ arrow: '↘', pos: 0 })
             }.width('100%')
+          }
+          .padding(16).backgroundColor(COLOR_PANEL_BG).borderRadius(12).width('100%')
+          .alignItems(HorizontalAlign.Start)
+
+          // Saved Locations
+          Column() {
+            Row() {
+              Text('Saved Locations').fontSize(17).fontWeight(FontWeight.Bold)
+                .fontColor(COLOR_TEXT).layoutWeight(1)
+              Text(`${this.presets.length}`).fontSize(13).fontColor(COLOR_HINT)
+            }.width('100%').margin({ bottom: 8 })
+
+            Text('Auto-saved on every successful connection. Used as fallback when USB/mDNS fail.')
+              .fontSize(11).fontColor(COLOR_SUBTEXT).margin({ bottom: 12 }).width('100%')
+
+            if (this.presets.length === 0) {
+              Text('No saved locations yet')
+                .fontSize(13).fontColor(COLOR_DIM).width('100%').textAlign(TextAlign.Center)
+                .padding({ top: 8, bottom: 8 })
+            } else {
+              ForEach(this.presets, (p: Preset): void => {
+                Row() {
+                  Column() {
+                    Text(`${p.host}:${p.port}`).fontSize(14).fontColor(COLOR_TEXT)
+                  }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+                  Button('×')
+                    .width(32).height(32).fontSize(18)
+                    .fontColor(COLOR_BAD).backgroundColor('transparent')
+                    .borderRadius(16).borderColor('#33FFFFFF').borderWidth(1)
+                    .onClick((): void => {
+                      Prefs.removePreset(p.host, p.port)
+                        .then((updated: Preset[]): void => { this.presets = updated })
+                        .catch((e: Error): void => console.warn(TAG, `removePreset: ${e.message}`))
+                    })
+                }
+                .width('100%').padding({ top: 6, bottom: 6 })
+                .alignItems(VerticalAlign.Center)
+              }, (p: Preset): string => `${p.host}:${p.port}`)
+            }
           }
           .padding(16).backgroundColor(COLOR_PANEL_BG).borderRadius(12).width('100%')
           .alignItems(HorizontalAlign.Start)
@@ -877,8 +1292,8 @@ struct Index {
             }
           })
 
-        // Stats 浮层（条件渲染）
-        if (this.showStats) {
+        // Stats 浮层（任何一项 stat 开着才渲染）
+        if (this.hasAnyStat()) {
           this.StatsOverlay()
         }
 

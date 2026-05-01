@@ -54,6 +54,10 @@ class StreamingServer {
     private var totalFrameAgeNs: UInt64 = 0
     private var profiledFrameCount: UInt64 = 0
 
+    /// Bonjour 服务广播 _sidescreen._tcp，鸿蒙端 mDNS 扫描可零配置发现。
+    /// 不影响 BSD listener，仅用于发现；连接仍走原 TCP 8888。
+    private var bonjourService: NetService?
+
     init(port: UInt16) {
         self.port = port
     }
@@ -102,10 +106,14 @@ class StreamingServer {
         acceptQueue.async { [weak self] in
             self?.acceptLoop()
         }
+
+        publishBonjour()
     }
 
     func stop() {
         isStopped = true
+
+        unpublishBonjour()
 
         // 让正在排队的 sendFrame 完成
         frameQueue.sync {}
@@ -322,6 +330,33 @@ class StreamingServer {
 
             let sendAge = DispatchTime.now().uptimeNanoseconds - timestamp
             self.updateStats(bytes: data.count, frameAgeNs: sendAge)
+        }
+    }
+
+    // MARK: - Bonjour
+
+    private func publishBonjour() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.bonjourService == nil else { return }
+            let hostname = Host.current().localizedName ?? "Mac"
+            let svc = NetService(
+                domain: "local.",
+                type: "_sidescreen._tcp.",
+                name: hostname,
+                port: Int32(self.port)
+            )
+            svc.publish()
+            self.bonjourService = svc
+            debugLog("Bonjour: published _sidescreen._tcp '\(hostname)' on port \(self.port)")
+        }
+    }
+
+    private func unpublishBonjour() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let svc = self.bonjourService else { return }
+            svc.stop()
+            self.bonjourService = nil
+            debugLog("Bonjour: unpublished")
         }
     }
 

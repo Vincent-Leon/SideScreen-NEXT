@@ -5,7 +5,7 @@
     { "name": "EntryAbility_label", "value": "Side Screen NEXT" },
 
     { "name": "title_main", "value": "Side Screen" },
-    { "name": "subtitle_main", "value": "Turn your tablet into a second display" },
+    { "name": "subtitle_main", "value": "Turn your HarmonyOS tablet into a second display" },
     { "name": "btn_connect", "value": "Connect" },
     { "name": "btn_connecting", "value": "Connecting…" },
     { "name": "ph_host_help", "value": "Host (USB: 127.0.0.1)" },

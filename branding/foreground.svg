@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- 主屏（Mac）：白色外壳 + 深蓝屏幕区，居中偏左上 -->
+  <g>
+    <!-- 显示器底座（颈 + 底） -->
+    <rect x="436" y="586" width="40" height="22" fill="#FFFFFF"/>
+    <rect x="350" y="606" width="212" height="14" rx="6" ry="6" fill="#FFFFFF"/>
+    <!-- 显示器外壳 -->
+    <rect x="186" y="232" width="540" height="356" rx="28" ry="28" fill="#FFFFFF"/>
+    <!-- 屏幕区域 -->
+    <rect x="208" y="254" width="496" height="312" rx="14" ry="14" fill="#0F2D5C"/>
+    <!-- 屏幕内容窗口（暗示桌面） -->
+    <rect x="240" y="290" width="180" height="120" rx="6" ry="6" fill="#3B82F6" opacity="0.85"/>
+    <rect x="448" y="318" width="226" height="222" rx="6" ry="6" fill="#60A5FA" opacity="0.55"/>
+  </g>
+
+  <!-- 副屏（鸿蒙平板）：蓝色外壳 + 白色屏幕，从主屏右下伸出 -->
+  <g>
+    <!-- 平板外壳（先描白边再画蓝色） -->
+    <rect x="618" y="442" width="260" height="368" rx="34" ry="34" fill="#FFFFFF"/>
+    <rect x="624" y="448" width="248" height="356" rx="32" ry="32" fill="#3B82F6"/>
+    <!-- 屏幕区域 -->
+    <rect x="648" y="476" width="200" height="288" rx="12" ry="12" fill="#FFFFFF" opacity="0.96"/>
+    <!-- 平板里的内容（主屏内容延伸） -->
+    <rect x="666" y="500" width="80" height="60" rx="4" ry="4" fill="#3B82F6" opacity="0.7"/>
+    <rect x="760" y="500" width="68" height="60" rx="4" ry="4" fill="#60A5FA" opacity="0.55"/>
+    <rect x="666" y="582" width="162" height="160" rx="4" ry="4" fill="#0F2D5C" opacity="0.18"/>
+    <!-- home 指示器 -->
+    <rect x="708" y="780" width="80" height="6" rx="3" ry="3" fill="#FFFFFF" opacity="0.75"/>
+  </g>
+</svg>

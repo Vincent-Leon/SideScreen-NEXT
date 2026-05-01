@@ -1,11 +1,11 @@
 {
   "string": [
     { "name": "module_desc", "value": "Side Screen NEXT 模块" },
-    { "name": "EntryAbility_desc", "value": "把你的平板变成 Mac 副屏" },
+    { "name": "EntryAbility_desc", "value": "把你的鸿蒙平板变成 Mac 副屏" },
     { "name": "EntryAbility_label", "value": "Side Screen NEXT" },
 
     { "name": "title_main", "value": "Side Screen" },
-    { "name": "subtitle_main", "value": "把你的平板变成 Mac 副屏" },
+    { "name": "subtitle_main", "value": "把你的鸿蒙平板变成 Mac 副屏" },
     { "name": "btn_connect", "value": "连接" },
     { "name": "btn_connecting", "value": "连接中…" },
     { "name": "ph_host_help", "value": "主机地址（USB 用 127.0.0.1）" },
@@ -65,7 +65,7 @@
     { "name": "btn_about", "value": "关于" },
 
     { "name": "about_title", "value": "关于" },
-    { "name": "about_tagline", "value": "把你的平板变成 Mac 副屏。" },
+    { "name": "about_tagline", "value": "把你的鸿蒙平板变成 Mac 副屏。" },
     { "name": "about_version_label", "value": "版本" },
     { "name": "about_open_source_title", "value": "开源致谢" },
     { "name": "about_credit_sidescreen", "value": "Side Screen（Mac 端）— MIT 许可证 © Tran Vuong Quoc Dat。本应用 Mac 侧捕获管线和通信协议派生自该上游项目。" },

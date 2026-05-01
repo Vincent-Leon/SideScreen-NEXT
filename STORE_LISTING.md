@@ -34,7 +34,7 @@ Side Screen NEXT
 ### 一句话简介（≤ 80 字）
 
 ```text
-把华为平板变成 MacBook 的低延迟有线副屏。USB-C 直连延迟 30 ms，支持自动旋转、Wi-Fi 备用。
+把鸿蒙平板变成 MacBook 的低延迟有线副屏。USB-C 直连延迟 30 ms，支持自动旋转、Wi-Fi 备用。
 ```
 
 ### 详细介绍

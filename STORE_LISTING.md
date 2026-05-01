@@ -15,7 +15,7 @@
 | Version | 0.2.0 |
 | 一级分类 | 工具 / Utilities |
 | 二级分类 | 实用工具 / Productivity |
-| 价格 | ¥6 / $1（一次性内购，无订阅） |
+| 价格 | ¥6（国内） / $2（海外，一次性买断，无订阅、无内购） |
 | 适配设备 | 平板（HarmonyOS NEXT 5.0+） |
 | 推荐机型 | MatePad mini、MatePad Pro |
 | 隐私权限 | INTERNET（必需）；本地网络发现（mDNS） |
@@ -164,22 +164,23 @@ second display, sidecar, mac, macbook, screen extender, usb-c, harmonyos, matepa
 
 1. **MIT 上游致谢已落地**
    - About 页面包含完整 attribution（Side Screen 上游、hdc、libusb），位置：进入投屏 → ⚙ → About
-   - LICENSE 文件需附带 MIT 许可证全文（待添加）
+   - LICENSE 文件含 MIT 许可证全文 + 三方依赖归属（已落地：仓库根 [LICENSE](LICENSE)）
 
 2. **付费定价合规**
    - AppGallery 不允许 0.99 / 1.99 USD 这种带 .99 的尾价 → 用整数（$1 / $2 等）
-   - 国内 ¥6 一档对应 AGC 价梯档（参考 AGC 价格档列表）
+   - **国内 ¥6 / 海外 $2**（已定）— 国内对应 AGC 价梯第 2 档，海外对应 Tier 2
 
 3. **隐私声明**
    - Manifest 仅声明 `ohos.permission.INTERNET`，无定位 / 无录音 / 无相机 / 无存储
    - 应用本身不收集任何用户数据，无埋点 / 无远程日志
-   - 隐私政策可一行写明：本应用不收集、不上传任何数据；所有连接均为本地 / 局域网点对点
+   - 完整隐私政策见仓库根 [PRIVACY.md](PRIVACY.md)，上架时通过 GitHub Pages 发布为公开 URL
 
 4. **上架材料**
-   - App icon（512 × 512 PNG，矢量来源）
+   - App icon（1024 × 1024 PNG，矢量来源）— **待制作**
    - 截图：未连接（含 Available Targets 列表）/ 投屏中（含状态浮层）/ 设置面板 / About 页面 — 各 2 张以上（横竖各一组）
    - 应用宣传视频（可选，60 秒以内）
 
-5. **海外上架（可选）**
+5. **海外上架**
    - 同步在 AppGallery 海外版上架，英文文案直接复用
-   - 价格用 $1（避免 .99 后缀，AGC 不允许）
+   - 价格 $2（避免 .99 后缀，AGC 不允许）
+   - 海外发行通道需要在 AGC 后台单独启用，并补充税务信息

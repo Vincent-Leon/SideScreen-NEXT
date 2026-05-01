@@ -960,12 +960,11 @@ struct Index {
   ConnectView() {
     Stack({ alignContent: Alignment.Center }) {
       Column({ space: 0 }) {
-        // 图标占位
-        Stack({ alignContent: Alignment.Center }) {
-          Text('🖥️').fontSize(40)
-        }
-        .width(80).height(80).borderRadius(40).backgroundColor('#1A2A4A')
-        .margin({ bottom: 24 })
+        // 应用图标 — 复用 layered_image 合成版
+        Image($r('app.media.app_icon_round'))
+          .width(96).height(96)
+          .objectFit(ImageFit.Contain)
+          .margin({ bottom: 24 })
 
         Text($r('app.string.title_main')).fontSize(28).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
           .margin({ bottom: 8 })

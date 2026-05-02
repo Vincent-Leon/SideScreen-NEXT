@@ -1,6 +1,6 @@
 # SideScreen-NEXT
 
-把 HarmonyOS NEXT 平板（如 MatePad mini）变成 MacBook 的低延迟有线副屏。
+把 HarmonyOS NEXT 平板变成 Mac 的低延迟副屏。
 
 USB-C 模式延迟可降至 30 ms 以内，Wi-Fi LAN 模式约 60–80 ms。
 
@@ -95,6 +95,25 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 ## 协议
 
 详见 [PROTOCOL.md](./PROTOCOL.md)。简要：5 种 type，TCP 长连接，HEVC Annex-B + per-IDR VPS/SPS/PPS，type=0x00 视频帧的 size 用大端，其余字段小端。
+
+---
+
+## OLED 屏长期使用建议
+
+MatePad mini 8.8 / Pro 等 OLED 屏设备长期作为 Mac 副屏使用时，建议开启以下设置降低 burn-in 风险：
+
+- **平板亮度 ≤ 50%**（室内 200–300 nit 足够，1800 nit 是户外峰值）
+- **暗黑模式**（降低平均像素发光）
+- **智能充电 80% 上限**：设置 → 电池 → 智能充电，长时间插电时启用
+- **Mac 端自动隐藏程序坞 + 菜单栏**：系统设置 → 桌面与程序坞
+- **Mac 端显示器睡眠 5–10 分钟**
+
+应用已内置：
+
+- 平板锁屏 / 切后台时主动断开，Mac 端帧停止，避免长期渲染同一界面
+- 浮层透明度可调（Settings 面板内）
+
+LCD 屏（部分华为平板）无 burn-in 物理机制，但同样建议低亮度 + 智能充电以延长背光寿命与电池循环。
 
 ---
 

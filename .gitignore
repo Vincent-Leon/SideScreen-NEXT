@@ -16,6 +16,9 @@ machost-fork/.build/
 machost-fork/.swiftpm/
 machost-fork/Package.resolved
 
+# 发布二进制（.app/.hap），通过 GitHub Releases 分发
+release/
+
 # 临时备份
 *.original.bak
 *.swp

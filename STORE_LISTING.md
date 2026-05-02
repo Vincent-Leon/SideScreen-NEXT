@@ -69,6 +69,9 @@ NET / FPS / BITRATE / RESOLUTION / RTT / BAT 六项参数可独立开关，浮�
 - 首次使用需在 Mac 上授予「屏幕录制」与「本地网络」权限
 - USB-C 模式需要支持数据传输的 USB-C 数据线（非纯充电线）
 
+💡 长期使用建议
+若设备为 OLED 屏（如 MatePad mini 8.8），建议平板亮度 ≤ 50% + 暗黑模式 + 智能充电 80% 上限，降低 burn-in 风险。本应用已实现锁屏 / 切后台自动断开，避免长时间渲染同一画面。
+
 📂 源代码
 github.com/vincenteMBP/SideScreen-NEXT
 ```
@@ -136,6 +139,9 @@ The Mac-side capture pipeline and wire protocol of this app are derived from the
 - macOS 14 or later
 - Grant Screen Recording and Local Network permissions on first launch
 - USB-C mode requires a data-capable USB-C cable (charging-only cables won't work)
+
+💡 Long-term use tips
+For OLED-panel devices (e.g. MatePad mini 8.8), keep tablet brightness ≤ 50%, enable dark mode, and cap charging at 80% to reduce burn-in risk. The app already auto-disconnects on lock-screen / backgrounding, preventing long static-image rendering.
 
 📂 Source code
 github.com/vincenteMBP/SideScreen-NEXT

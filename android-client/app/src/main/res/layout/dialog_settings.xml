@@ -30,7 +30,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Display Settings"
+            android:text="@string/settings_title"
             android:textColor="#FFFFFF"
             android:textSize="28sp"
             android:textStyle="bold"
@@ -55,14 +55,14 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Show Stats"
+                    android:text="@string/settings_show_stats"
                     android:textColor="#FFFFFF"
                     android:textSize="17sp"
                     android:textStyle="bold" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="FPS, bitrate, resolution"
+                    android:text="@string/settings_show_stats_subtitle"
                     android:textColor="#999999"
                     android:textSize="13sp" />
             </LinearLayout>
@@ -88,7 +88,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Overlay Opacity"
+                android:text="@string/settings_overlay_opacity"
                 android:textColor="#FFFFFF"
                 android:textSize="17sp"
                 android:textStyle="bold"
@@ -129,7 +129,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Settings Button Position"
+                android:text="@string/settings_button_position"
                 android:textColor="#FFFFFF"
                 android:textSize="17sp"
                 android:textStyle="bold"
@@ -305,7 +305,7 @@
                 android:layout_width="0dp"
                 android:layout_height="48dp"
                 android:layout_weight="1"
-                android:text="Reset Overlay"
+                android:text="@string/btn_reset_overlay"
                 android:textColor="#FFFFFF"
                 android:textSize="12sp"
                 android:layout_marginEnd="4dp"
@@ -321,7 +321,7 @@
                 android:layout_width="0dp"
                 android:layout_height="48dp"
                 android:layout_weight="1"
-                android:text="Reset Button"
+                android:text="@string/btn_reset_button"
                 android:textColor="#FFFFFF"
                 android:textSize="12sp"
                 android:layout_marginStart="4dp"
@@ -337,7 +337,7 @@
             style="@style/Widget.MaterialComponents.Button.TextButton"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:text="Disconnect"
+            android:text="@string/btn_disconnect"
             android:textColor="#F44336"
             android:textSize="13sp"
             android:layout_marginTop="8dp"
@@ -351,7 +351,7 @@
             android:id="@+id/closeButton"
             android:layout_width="match_parent"
             android:layout_height="56dp"
-            android:text="DONE"
+            android:text="@string/btn_done"
             android:textSize="16sp"
             android:textStyle="bold"
             android:layout_marginTop="16dp"

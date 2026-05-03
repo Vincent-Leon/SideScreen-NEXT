@@ -12,7 +12,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Display Settings"
+        android:text="@string/settings_title"
         android:textColor="#FFFFFF"
         android:textSize="24sp"
         android:textStyle="bold"
@@ -34,14 +34,14 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Show Stats Overlay"
+                android:text="@string/settings_show_stats_long"
                 android:textColor="#FFFFFF"
                 android:textSize="16sp"
                 android:textStyle="bold" />
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Display FPS, bitrate, and resolution"
+                android:text="@string/settings_show_stats_subtitle_long"
                 android:textColor="#AAAAAA"
                 android:textSize="12sp" />
         </LinearLayout>
@@ -59,7 +59,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Overlay Opacity"
+        android:text="@string/settings_overlay_opacity"
         android:textColor="#FFFFFF"
         android:textSize="16sp"
         android:textStyle="bold"
@@ -108,7 +108,7 @@
         style="@style/Widget.MaterialComponents.Button.OutlinedButton"
         android:layout_width="match_parent"
         android:layout_height="48dp"
-        android:text="Reset Overlay Position"
+        android:text="@string/btn_reset_overlay_position"
         android:textColor="#FFFFFF"
         app:strokeColor="#FFFFFF"
         app:strokeWidth="1dp"
@@ -120,7 +120,7 @@
         android:id="@+id/closeButton"
         android:layout_width="match_parent"
         android:layout_height="56dp"
-        android:text="DONE"
+        android:text="@string/btn_done"
         android:textSize="16sp"
         android:textStyle="bold"
         app:cornerRadius="14dp"

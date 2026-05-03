@@ -346,7 +346,7 @@ class MainActivity : AppCompatActivity() {
 
             // Validate input
             if (host.isBlank()) {
-                showError("Please enter a host address")
+                showError(getString(R.string.err_enter_host))
                 return@setOnClickListener
             }
 
@@ -365,7 +365,7 @@ class MainActivity : AppCompatActivity() {
             userInitiatedDisconnect = false
             cancelReconnect()
 
-            updateStatus("Connecting...")
+            updateStatus(getString(R.string.status_connecting))
             connect(host, port)
         }
 
@@ -380,11 +380,12 @@ class MainActivity : AppCompatActivity() {
         binding.showAdvanced.setOnClickListener {
             advancedVisible = !advancedVisible
             binding.advancedSettings.visibility = if (advancedVisible) View.VISIBLE else View.GONE
-            binding.showAdvanced.text = if (advancedVisible) "Hide Advanced Settings" else "Advanced Settings"
+            binding.showAdvanced.text =
+                getString(if (advancedVisible) R.string.btn_advanced_hide else R.string.btn_advanced_show)
         }
 
         // Initial status
-        updateStatus("Ready to connect")
+        updateStatus(getString(R.string.status_ready))
     }
 
     /**
@@ -417,9 +418,9 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             android.app.AlertDialog
                 .Builder(this)
-                .setTitle("Connection Error")
+                .setTitle(getString(R.string.err_title))
                 .setMessage(message)
-                .setPositiveButton("OK", null)
+                .setPositiveButton(android.R.string.ok, null)
                 .show()
         }
     }
@@ -895,9 +896,9 @@ class MainActivity : AppCompatActivity() {
                         isConnecting = false
 
                         if (connected) {
-                            updateStatus("Connected - Streaming active")
+                            updateStatus(getString(R.string.status_connected))
                         } else {
-                            updateStatus("Disconnected")
+                            updateStatus(getString(R.string.status_disconnected))
                         }
 
                         binding.connectButton.isEnabled = !connected
@@ -1011,12 +1012,11 @@ class MainActivity : AppCompatActivity() {
                 val errorMessage =
                     when {
                         e.message?.contains("ECONNREFUSED") == true -> {
-                            "Mac server is not running.\n\nPlease start Side Screen.app on your Mac first."
+                            getString(R.string.err_mac_not_running)
                         }
 
                         e.message?.contains("Network is unreachable") == true -> {
-                            "Cannot reach Mac.\n\n" +
-                                "Make sure both devices are connected via USB cable and ADB reverse is configured."
+                            getString(R.string.err_network_unreachable)
                         }
 
                         e.message?.contains("timeout") == true -> {
@@ -1029,7 +1029,7 @@ class MainActivity : AppCompatActivity() {
                                 "• Check USB connection\n• Run: adb reverse tcp:8888 tcp:8888"
                         }
                     }
-                updateStatus("Connection failed")
+                updateStatus(getString(R.string.status_failed))
                 showError(errorMessage)
                 isConnecting = false
             }
@@ -1159,10 +1159,10 @@ class MainActivity : AppCompatActivity() {
 
         log(
             "🔄 Orientation: ${when (rotation) {
-                90 -> "Portrait"
-                180 -> "Landscape (flipped)"
-                270 -> "Portrait (flipped)"
-                else -> "Landscape"
+                90 -> getString(R.string.orientation_portrait)
+                180 -> getString(R.string.orientation_landscape_flipped)
+                270 -> getString(R.string.orientation_portrait_flipped)
+                else -> getString(R.string.orientation_landscape)
             }}",
         )
     }
@@ -1280,7 +1280,8 @@ class MainActivity : AppCompatActivity() {
                 R.drawable.status_indicator_red
             },
         )
-        binding.statusText.text = if (allReady) "Ready to connect" else "Not ready to connect"
+        binding.statusText.text =
+            getString(if (allReady) R.string.status_ready else R.string.status_not_ready)
     }
 
     private fun updateChecklistItem(

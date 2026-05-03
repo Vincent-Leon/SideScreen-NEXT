@@ -45,7 +45,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="FPS"
+                    android:text="@string/stats_fps"
                     android:textColor="#88FFFFFF"
                     android:textSize="10sp" />
                 <TextView
@@ -67,7 +67,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="BITRATE"
+                    android:text="@string/stats_bitrate"
                     android:textColor="#88FFFFFF"
                     android:textSize="10sp" />
                 <TextView
@@ -89,7 +89,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="RESOLUTION"
+                    android:text="@string/stats_resolution"
                     android:textColor="#88FFFFFF"
                     android:textSize="10sp" />
                 <TextView
@@ -110,7 +110,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="RTT"
+                    android:text="@string/stats_rtt"
                     android:textColor="#88FFFFFF"
                     android:textSize="10sp" />
                 <TextView
@@ -180,7 +180,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Side Screen"
+                android:text="@string/app_name"
                 android:textColor="#FFFFFF"
                 android:textSize="28sp"
                 android:textStyle="bold"
@@ -191,7 +191,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Turn your tablet into a second display"
+                android:text="@string/app_subtitle"
                 android:textColor="#999999"
                 android:textSize="14sp"
                 android:gravity="center"
@@ -210,7 +210,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Connection Checklist"
+                    android:text="@string/checklist_title"
                     android:textColor="#FFFFFF"
                     android:textSize="14sp"
                     android:textStyle="bold"
@@ -234,7 +234,7 @@
                         android:layout_width="0dp"
                         android:layout_weight="1"
                         android:layout_height="wrap_content"
-                        android:text="Developer Mode enabled"
+                        android:text="@string/check_developer_mode"
                         android:textColor="#BBBBBB"
                         android:textSize="13sp" />
                 </LinearLayout>
@@ -257,7 +257,7 @@
                         android:layout_width="0dp"
                         android:layout_weight="1"
                         android:layout_height="wrap_content"
-                        android:text="USB Debugging enabled"
+                        android:text="@string/check_usb_debugging"
                         android:textColor="#BBBBBB"
                         android:textSize="13sp" />
                 </LinearLayout>
@@ -280,7 +280,7 @@
                         android:layout_width="0dp"
                         android:layout_weight="1"
                         android:layout_height="wrap_content"
-                        android:text="USB cable connected"
+                        android:text="@string/check_usb_cable"
                         android:textColor="#BBBBBB"
                         android:textSize="13sp" />
                 </LinearLayout>
@@ -302,7 +302,7 @@
                         android:layout_width="0dp"
                         android:layout_weight="1"
                         android:layout_height="wrap_content"
-                        android:text="Mac server running"
+                        android:text="@string/check_mac_server"
                         android:textColor="#BBBBBB"
                         android:textSize="13sp" />
                 </LinearLayout>
@@ -314,7 +314,7 @@
                 android:id="@+id/connectButton"
                 android:layout_width="match_parent"
                 android:layout_height="64dp"
-                android:text="Connect"
+                android:text="@string/btn_connect"
                 android:textSize="18sp"
                 android:textStyle="bold"
                 app:cornerRadius="20dp"
@@ -341,7 +341,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Ready to connect"
+                    android:text="@string/status_ready"
                     android:textColor="#AAAAAA"
                     android:textSize="14sp" />
             </LinearLayout>
@@ -396,7 +396,7 @@
                 android:id="@+id/showAdvanced"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Advanced Settings"
+                android:text="@string/btn_advanced_show"
                 android:textColor="#007AFF"
                 android:textSize="13sp"
                 android:gravity="center"

@@ -1,4 +1,59 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Side Screen</string>
+    <string name="app_subtitle">Turn your tablet into a second display</string>
+
+    <!-- Connection checklist -->
+    <string name="checklist_title">Connection Checklist</string>
+    <string name="check_developer_mode">Developer Mode enabled</string>
+    <string name="check_usb_debugging">USB Debugging enabled</string>
+    <string name="check_usb_cable">USB cable connected</string>
+    <string name="check_mac_server">Mac server running</string>
+
+    <!-- Buttons -->
+    <string name="btn_connect">Connect</string>
+    <string name="btn_disconnect">Disconnect</string>
+    <string name="btn_done">DONE</string>
+    <string name="btn_advanced_show">Advanced Settings</string>
+    <string name="btn_advanced_hide">Hide Advanced Settings</string>
+    <string name="btn_reset_overlay">Reset Overlay</string>
+    <string name="btn_reset_button">Reset Button</string>
+    <string name="btn_reset_overlay_position">Reset Overlay Position</string>
+
+    <!-- Status messages -->
+    <string name="status_ready">Ready to connect</string>
+    <string name="status_not_ready">Not ready to connect</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_connected">Connected — Streaming active</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_failed">Connection failed</string>
+    <string name="status_screen_off">Screen off — paused</string>
+    <string name="status_reconnect_attempt">Reconnecting (%1$d/%2$d) in %3$ds…</string>
+
+    <!-- Error messages -->
+    <string name="err_title">Connection Error</string>
+    <string name="err_enter_host">Please enter a host address</string>
+    <string name="err_mac_not_running">Mac server is not running.\n\nPlease start Side Screen.app on your Mac first.</string>
+    <string name="err_network_unreachable">Cannot reach Mac.\n\nMake sure both devices are connected via USB cable and ADB reverse is configured.</string>
+
+    <!-- Settings dialog -->
+    <string name="settings_title">Display Settings</string>
+    <string name="settings_show_stats">Show Stats</string>
+    <string name="settings_show_stats_long">Show Stats Overlay</string>
+    <string name="settings_show_stats_subtitle">FPS, bitrate, resolution</string>
+    <string name="settings_show_stats_subtitle_long">Display FPS, bitrate, and resolution</string>
+    <string name="settings_overlay_opacity">Overlay Opacity</string>
+    <string name="settings_button_position">Settings Button Position</string>
+
+    <!-- Stats overlay labels -->
+    <string name="stats_fps">FPS</string>
+    <string name="stats_bitrate">BITRATE</string>
+    <string name="stats_resolution">RESOLUTION</string>
+    <string name="stats_rtt">RTT</string>
+
+    <!-- Orientation labels -->
+    <string name="orientation_portrait">Portrait</string>
+    <string name="orientation_portrait_flipped">Portrait (flipped)</string>
+    <string name="orientation_landscape">Landscape</string>
+    <string name="orientation_landscape_flipped">Landscape (flipped)</string>
 </resources>

@@ -11,6 +11,10 @@ harmony-client/entry/oh_modules/
 harmony-client/build/
 harmony-client/local.properties
 
+# 签名材料（每个开发者本机自签或 AGC release cert，含混淆密码 + 绝对路径，永远不进仓）
+# 复制 build-profile.json5.template 到 build-profile.json5 后填入本地路径即可。
+harmony-client/build-profile.json5
+
 # Swift 包构建
 machost-fork/.build/
 machost-fork/.swiftpm/

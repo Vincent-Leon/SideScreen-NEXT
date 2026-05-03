@@ -567,6 +567,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.streamingServer = server
             self.state = .listening
             self.settings.isRunning = true
+
+            // Eager mode: build virtualDisplay + capture immediately so the
+            //副屏 is usable as soon as the user starts the server, even
+            // before any client connects. Lazy mode (default) defers this to
+            // the first real-client message via handleClientReady.
+            if self.settings.eagerVirtualDisplay {
+                self.state = .starting
+                self.pendingStartStream?.cancel()
+                self.pendingStartStream = Task { @MainActor [weak self] in
+                    await self?.startStreamBody()
+                }
+            }
         }
 
         print("✅ Server listening on port \(settings.port) — waiting for client")
@@ -651,12 +663,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleClientReady() {
         switch state {
         case .starting:
-            pendingStartStream?.cancel()
-            pendingStartStream = Task { @MainActor [weak self] in
-                await self?.startStreamBody()
+            // 只在没有 in-flight 任务时才 spawn。eager 模式下 startServer 已经
+            // 起了一个 startStreamBody，让它跑完就行；不要 cancel + respawn。
+            if pendingStartStream == nil {
+                pendingStartStream = Task { @MainActor [weak self] in
+                    await self?.startStreamBody()
+                }
             }
         case .streaming:
-            // 已经在跑。可能是新 client 切换后又发了一条 rotation/ping。
+            // 已经在跑。可能是新 client 切换后又发了一条 rotation/ping，
+            // 或者 eager 模式下 client 终于连上来了。
             // 推一次 displayConfig + IDR 让它立刻能解码当前帧。
             screenCapture?.requestKeyframe()
             streamingServer?.sendDisplaySize()
@@ -672,18 +688,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Probe disconnected (or stream startup failed during sleep). Cancel the
             // in-flight task; nothing was created yet so tearDown is a no-op.
             pendingStartStream?.cancel()
-            // Don't await here — let it self-clean. Just transition state.
             tearDownStreamArtifacts()
-            state = .listening
             settings.clientConnected = false
+            if settings.eagerVirtualDisplay {
+                // Eager mode: rebuild the virtual display so it's ready when next
+                // client (or local Mac use) needs it.
+                state = .starting
+                pendingStartStream = Task { @MainActor [weak self] in
+                    await self?.startStreamBody()
+                }
+            } else {
+                state = .listening
+            }
 
         case .streaming:
-            // Lock screen / USB pull / network drop. Auto-pause: kill virtualDisplay
-            // + capture, keep listener alive for next reconnect.
-            tearDownStreamArtifacts()
-            state = .listening
             settings.clientConnected = false
-            print("ℹ️ Client disconnected — virtual display destroyed, listener kept")
+            if settings.eagerVirtualDisplay {
+                // Eager: keep stream alive — encoder keeps running but sendFrame
+                // is a no-op when no client fd is connected. Virtual display
+                // stays available on Mac for local use / next client.
+                print("ℹ️ Client disconnected — eager mode, virtual display kept up")
+            } else {
+                // Lazy: lock screen / USB pull / network drop → kill virtualDisplay
+                // + capture, keep listener for next reconnect.
+                tearDownStreamArtifacts()
+                state = .listening
+                print("ℹ️ Client disconnected — virtual display destroyed, listener kept")
+            }
 
         case .listening, .idle, .stopping:
             settings.clientConnected = false

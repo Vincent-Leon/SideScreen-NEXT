@@ -350,6 +350,22 @@ struct SettingsView: View {
                                         .foregroundColor(.secondary)
                                 }
 
+                                Divider().padding(.vertical, 4)
+
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Eager Virtual Display")
+                                            .font(.system(size: 12, weight: .medium))
+                                        Text("Create the virtual display on Start instead of waiting for a client. Recommended for headless Macs (MacMini etc.).")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    Spacer()
+                                    Toggle("", isOn: $settings.eagerVirtualDisplay)
+                                        .labelsHidden()
+                                        .disabled(settings.isRunning)
+                                }
                             }
                         }
 
@@ -885,6 +901,11 @@ class DisplaySettings: ObservableObject {
     @Published var touchEnabled: Bool {
         didSet { save("touchEnabled", touchEnabled) }
     }
+    /// Eager mode: 点 Start 立刻建虚拟显示器（不等 client 连上）。MacMini 等无显示器主机
+    /// 用户场景——副屏要立即可用 + 远程登录能直接看到副屏。默认 false（lazy）。
+    @Published var eagerVirtualDisplay: Bool {
+        didSet { save("eagerVirtualDisplay", eagerVirtualDisplay) }
+    }
     // Runtime state (not persisted)
     @Published var displayCreated = false
     @Published var clientConnected = false
@@ -910,6 +931,7 @@ class DisplaySettings: ObservableObject {
         self.customWidth = defaults.object(forKey: keyPrefix + "customWidth") as? Int ?? 1920
         self.customHeight = defaults.object(forKey: keyPrefix + "customHeight") as? Int ?? 1200
         self.touchEnabled = defaults.object(forKey: keyPrefix + "touchEnabled") as? Bool ?? true
+        self.eagerVirtualDisplay = defaults.bool(forKey: keyPrefix + "eagerVirtualDisplay")
 
         print("Loaded settings: \(resolution) @ \(refreshRate)Hz, bitrate=\(bitrate), quality=\(quality)")
     }

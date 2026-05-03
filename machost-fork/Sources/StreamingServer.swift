@@ -31,6 +31,11 @@ class StreamingServer {
     // 上游接口对齐
     var onClientConnected: (() -> Void)?
     var onClientDisconnected: (() -> Void)?
+    /// 收到该 client 第一条上行消息（rotation 0x03 / ping 0x04）时触发一次。
+    /// 用来区分"真实客户端"和"probe"——probe 只读取 0x01 displayConfig 后就关 socket，
+    /// 全程不发任何消息，因此不会触发本回调。AppDelegate 在收到这个信号前不分配
+    /// virtualDisplay，避免每次 probe 都建/拆一次副屏闪烁。
+    var onClientReady: (() -> Void)?
     var onTouchEvent: ((Float, Float, Int, Int, Float, Float) -> Void)?
     var onStats: ((Double, Double) -> Void)?
     /// 客户端发起的旋转请求（type=0x03），rotation 单位为度 (0/90/180/270)。
@@ -50,6 +55,9 @@ class StreamingServer {
     private var rotation = 0
     private var isStopped = false
     private var connectionReady = false
+    /// 当前 client 是否已发过任何上行消息（在 acceptLoop 替换 clientFd 时重置为 false）。
+    /// 由 clientLock 保护——receiveLoop 读写，acceptLoop 重置。
+    private var firstMessageSeen = false
 
     private var totalFrameAgeNs: UInt64 = 0
     private var profiledFrameCount: UInt64 = 0
@@ -163,6 +171,7 @@ class StreamingServer {
             let old = clientFd
             clientFd = cfd
             connectionReady = false
+            firstMessageSeen = false
             droppedFrames = 0
             clientLock.unlock()
             if old >= 0 {
@@ -204,6 +213,18 @@ class StreamingServer {
             var typeByte: UInt8 = 0
             let n = recv(fd, &typeByte, 1, Int32(MSG_WAITALL))
             if n <= 0 { break }
+
+            // 首字节到达——这是"真实 client"信号（probe 只读不写）。仅触发一次。
+            clientLock.lock()
+            let shouldFireReady = (clientFd == fd && !firstMessageSeen)
+            if shouldFireReady {
+                firstMessageSeen = true
+            }
+            clientLock.unlock()
+            if shouldFireReady {
+                debugLog("First client message (type=\(typeByte)) — real client confirmed")
+                onClientReady?()
+            }
 
             switch typeByte {
             case 2:
@@ -256,13 +277,20 @@ class StreamingServer {
 
     private func cleanupClient(fd: Int32) {
         clientLock.lock()
-        if clientFd == fd {
+        let wasActive = (clientFd == fd)
+        if wasActive {
             clientFd = -1
             connectionReady = false
+            firstMessageSeen = false
         }
         clientLock.unlock()
         Darwin.close(fd)
-        onClientDisconnected?()
+        // 只在该 fd 是当前活跃连接时才触发 onClientDisconnected。
+        // acceptLoop 替换旧连接 (shutdown+close 旧 fd) 也会让旧 receiveLoop 退出走到这里，
+        // 那种情况下旧 fd 已经不是 clientFd——不应误触发"客户端断开"信号导致 stream 拆掉。
+        if wasActive {
+            onClientDisconnected?()
+        }
     }
 
     // MARK: - Public API
@@ -276,6 +304,22 @@ class StreamingServer {
     func updateRotation(_ rotation: Int) {
         self.rotation = rotation
         sendDisplaySize()
+    }
+
+    /// 用户主动 Stop server 时调，告知 client 这是有意停服（区别于锁屏 / USB 拔等被动断）。
+    /// Client 收到 type=0x06 后应回 idle 而不是自动重连。无 payload，仅 1 字节。
+    /// 调用方应在此函数返回后再 close listener / client fd。
+    func sendServerShutdown() {
+        clientLock.lock()
+        let fd = clientFd
+        clientLock.unlock()
+        guard fd >= 0 else { return }
+
+        var byte: UInt8 = 6
+        _ = withUnsafePointer(to: &byte) { ptr in
+            sendAll(fd: fd, bytes: UnsafeRawPointer(ptr), length: 1)
+        }
+        debugLog("Sent server-shutdown notice (type=0x06) to client")
     }
 
     func sendDisplaySize() {

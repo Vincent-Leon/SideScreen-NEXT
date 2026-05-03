@@ -19,6 +19,8 @@ const KEY_SHOW_RTT: string = 'showRtt'
 const KEY_SHOW_BATTERY: string = 'showBattery'
 const KEY_OPACITY: string = 'overlayOpacity'
 const KEY_BTN_POS: string = 'settingsBtnPos'
+const KEY_WIFI_DISABLED: string = 'wifiDisabled'
+const KEY_AUTO_RECONNECT: string = 'autoReconnect'
 const KEY_PRESETS: string = 'presets'  // JSON string of Preset[]
 const TAG: string = '[Prefs]'
 
@@ -39,6 +41,11 @@ export interface SavedUiPrefs {
   overlayOpacity: number
   /** 设置按钮位置：0=BR, 1=BL, 2=TR, 3=TL, 4=TC, 5=BC, 6=CL, 7=CR */
   settingsBtnPos: number
+  /** 仅 USB 模式：跳过 mDNS 扫描、saved presets，只走 127.0.0.1 USB 隧道。 */
+  wifiDisabled: boolean
+  /** 自动重连：断线后自动尝试恢复（USB-only 模式 = USB probe 循环；
+   *  Wi-Fi 模式 = [3s, 5s, 8s] 重连 ladder）。关掉 = 断了就停在断开态。 */
+  autoReconnect: boolean
 }
 
 export interface Preset {
@@ -89,6 +96,7 @@ export class Prefs {
       showTransport: true, showFps: true, showBitrate: true,
       showResolution: true, showRtt: true, showBattery: true,
       overlayOpacity: 0.8, settingsBtnPos: 0,
+      wifiDisabled: false, autoReconnect: true,
     }
     if (Prefs.store == null) return fallback
     try {
@@ -100,9 +108,12 @@ export class Prefs {
       const showBattery = await Prefs.store.get(KEY_SHOW_BATTERY, true) as boolean
       const overlayOpacity = await Prefs.store.get(KEY_OPACITY, 0.8) as number
       const settingsBtnPos = await Prefs.store.get(KEY_BTN_POS, 0) as number
+      const wifiDisabled = await Prefs.store.get(KEY_WIFI_DISABLED, false) as boolean
+      const autoReconnect = await Prefs.store.get(KEY_AUTO_RECONNECT, true) as boolean
       return {
         showTransport, showFps, showBitrate, showResolution, showRtt, showBattery,
         overlayOpacity, settingsBtnPos,
+        wifiDisabled, autoReconnect,
       }
     } catch (e) {
       console.warn(TAG, `loadUi failed: ${(e as Error).message}`)
@@ -121,6 +132,8 @@ export class Prefs {
       await Prefs.store.put(KEY_SHOW_BATTERY, cfg.showBattery)
       await Prefs.store.put(KEY_OPACITY, cfg.overlayOpacity)
       await Prefs.store.put(KEY_BTN_POS, cfg.settingsBtnPos)
+      await Prefs.store.put(KEY_WIFI_DISABLED, cfg.wifiDisabled)
+      await Prefs.store.put(KEY_AUTO_RECONNECT, cfg.autoReconnect)
       await Prefs.store.flush()
     } catch (e) {
       console.warn(TAG, `saveUi failed: ${(e as Error).message}`)

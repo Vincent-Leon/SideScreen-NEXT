@@ -14,7 +14,7 @@ import { batteryInfo } from '@kit.BasicServicesKit'
 import { display, promptAction } from '@kit.ArkUI'
 import { socket } from '@kit.NetworkKit'
 import { BusinessError } from '@kit.BasicServicesKit'
-import { StreamClient, StreamClientCallbacks } from '../net/StreamClient'
+import { StreamClient, StreamClientCallbacks, REASON_SERVER_SHUTDOWN } from '../net/StreamClient'
 import { Prefs, SavedConnection, SavedUiPrefs, Preset } from '../util/Prefs'
 import { discoverSideScreen, DiscoveredService } from '../util/MdnsDiscovery'
 import { I18n } from '../util/I18n'
@@ -134,6 +134,18 @@ struct Index {
   @State showBattery: boolean = true
   @State overlayOpacity: number = 0.8
   @State settingsBtnPos: number = 0     // 0=BR / 1=BL / 2=TR / 3=TL / 4=TC / 5=BC / 6=CL / 7=CR
+  /** 仅 USB 模式：跳过 mDNS / saved presets，只走 127.0.0.1 USB 隧道。 */
+  @State wifiDisabled: boolean = false
+  /** 自动重连：断开后自动恢复（USB-only = USB probe 循环；Wi-Fi = ladder）。 */
+  @State autoReconnect: boolean = true
+
+  // ---- 暂停态（连接断了但保留画面，等待自动 / 手动恢复）----
+  /** true 时 XComponent 留着上一帧画面，叠加暂停 overlay。userInitiatedDisconnect 不进入此态。 */
+  @State paused: boolean = false
+  /** 暂停态 hint 文案 key：'usb' (等 USB) / 'manual' (autoReconnect off, 等用户点击) */
+  @State pausedHintKind: string = 'usb'
+  /** USB-only 暂停时的 1Hz 探测 timer */
+  private usbWaitTimer: number = -1
 
   // ---- Connection Checklist:实时发现的所有可达目标(USB / mDNS / 已保存预设)----
   @State reachableTargets: ReachableTarget[] = []
@@ -191,6 +203,8 @@ struct Index {
         this.showBattery = ui.showBattery
         this.overlayOpacity = ui.overlayOpacity
         this.settingsBtnPos = ui.settingsBtnPos
+        this.wifiDisabled = ui.wifiDisabled
+        this.autoReconnect = ui.autoReconnect
         return Prefs.loadPresets()
       })
       .then((list: Preset[]): void => {
@@ -247,6 +261,7 @@ struct Index {
   aboutToDisappear(): void {
     this.stopProbeTimer()
     this.stopUsbWatch()
+    this.stopUsbWaitTimer()
     if (this.batteryTimer >= 0) {
       clearInterval(this.batteryTimer)
       this.batteryTimer = -1
@@ -349,39 +364,42 @@ struct Index {
 
     const found: ReachableTarget[] = []
     try {
-      // 1) USB(127.0.0.1:8888)
+      // 1) USB(127.0.0.1:8888) — 不论模式都探
       const usb = await this.probeServer('127.0.0.1', 8888)
       if (usb.isSideScreen) {
         found.push({ host: '127.0.0.1', port: 8888, label: 'USB', serviceName: '' })
       }
 
-      // 2) mDNS 扫描(3s)
-      try {
-        const ctx = getContext(this) as common.UIAbilityContext
-        const services = await discoverSideScreen(ctx, 3000)
-        for (let i = 0; i < services.length; i++) {
-          const svc = services[i]
-          // 跳过和 USB 重复（loopback IP 不会撞，但保险起见）
-          const dup = found.some((t: ReachableTarget): boolean =>
-            t.host === svc.host && t.port === svc.port)
-          if (!dup) {
-            found.push({ host: svc.host, port: svc.port, label: 'mDNS', serviceName: svc.serviceName })
-          }
-        }
-      } catch (_) { /* mDNS 失败不影响其他探测 */ }
-
-      // 3) 已保存预设(只 probe 不在前两步里的)
-      for (let i = 0; i < this.presets.length; i++) {
-        const p = this.presets[i]
-        const dup = found.some((t: ReachableTarget): boolean =>
-          t.host === p.host && t.port === p.port)
-        if (dup) continue
+      // 仅 USB 模式：跳过 mDNS + saved presets
+      if (!this.wifiDisabled) {
+        // 2) mDNS 扫描(3s)
         try {
-          const r = await this.probeServer(p.host, p.port)
-          if (r.isSideScreen) {
-            found.push({ host: p.host, port: p.port, label: 'Saved', serviceName: '' })
+          const ctx = getContext(this) as common.UIAbilityContext
+          const services = await discoverSideScreen(ctx, 3000)
+          for (let i = 0; i < services.length; i++) {
+            const svc = services[i]
+            // 跳过和 USB 重复（loopback IP 不会撞，但保险起见）
+            const dup = found.some((t: ReachableTarget): boolean =>
+              t.host === svc.host && t.port === svc.port)
+            if (!dup) {
+              found.push({ host: svc.host, port: svc.port, label: 'mDNS', serviceName: svc.serviceName })
+            }
           }
-        } catch (_) { /* skip */ }
+        } catch (_) { /* mDNS 失败不影响其他探测 */ }
+
+        // 3) 已保存预设(只 probe 不在前两步里的)
+        for (let i = 0; i < this.presets.length; i++) {
+          const p = this.presets[i]
+          const dup = found.some((t: ReachableTarget): boolean =>
+            t.host === p.host && t.port === p.port)
+          if (dup) continue
+          try {
+            const r = await this.probeServer(p.host, p.port)
+            if (r.isSideScreen) {
+              found.push({ host: p.host, port: p.port, label: 'Saved', serviceName: '' })
+            }
+          } catch (_) { /* skip */ }
+        }
       }
 
       this.reachableTargets = found
@@ -450,6 +468,8 @@ struct Index {
       onConnected: (): void => {
         this.connecting = false
         this.connected = true
+        this.paused = false
+        this.stopUsbWaitTimer()
         this.reconnectAttempts = 0
         this.lastError = ''
         this.status = I18n.s($r('app.string.status_streaming_via'),
@@ -477,24 +497,12 @@ struct Index {
         }
       },
       onDisconnected: (reason: string): void => {
-        this.connecting = false
-        this.connected = false
-        this.stopStatsTimer()
-        this.stopUsbWatch()
-        if (this.decoderRunning) {
-          nativeStop()
-          this.decoderRunning = false
-        }
-        this.streamWidth = 0
-        this.streamHeight = 0
-        if (this.userInitiatedDisconnect) {
-          this.status = I18n.s($r('app.string.status_disconnected'))
-          this.userInitiatedDisconnect = false
-          this.startProbeTimer()
-        } else {
-          this.status = I18n.s($r('app.string.status_disconnected_reason'), reason)
-          this.scheduleReconnect()
-        }
+        this.handleDisconnected(reason)
+      },
+      onServerShutdown: (): void => {
+        // Mac 主动停服。socket 还会接着 close 触发 onDisconnected，那里 reason 会是
+        // REASON_SERVER_SHUTDOWN，走"回 idle 页"分支。
+        console.info(TAG, 'server-shutdown received from Mac')
       },
       onDisplayConfig: (w: number, h: number, _rot: number): void => {
         const dimsChanged = (w !== this.streamWidth || h !== this.streamHeight)
@@ -563,36 +571,39 @@ struct Index {
     // 1) USB（hdc rport tunnel 时本地回环最快）
     candidates.push({ host: '127.0.0.1', port: 8888, label: 'USB' })
 
-    // 2) mDNS scan（3 秒）
-    this.status = I18n.s($r('app.string.status_scanning'))
-    try {
-      const ctx = getContext(this) as common.UIAbilityContext
-      const found = await discoverSideScreen(ctx, 3000)
-      for (let i = 0; i < found.length; i++) {
-        const svc = found[i]
-        candidates.push({ host: svc.host, port: svc.port, label: 'mDNS' })
+    // 仅 USB 模式：不扫 mDNS / saved presets / manual host，候选只有 USB
+    if (!this.wifiDisabled) {
+      // 2) mDNS scan（3 秒）
+      this.status = I18n.s($r('app.string.status_scanning'))
+      try {
+        const ctx = getContext(this) as common.UIAbilityContext
+        const found = await discoverSideScreen(ctx, 3000)
+        for (let i = 0; i < found.length; i++) {
+          const svc = found[i]
+          candidates.push({ host: svc.host, port: svc.port, label: 'mDNS' })
+        }
+      } catch (e) {
+        console.warn(TAG, `mdns scan failed: ${(e as Error).message}`)
       }
-    } catch (e) {
-      console.warn(TAG, `mdns scan failed: ${(e as Error).message}`)
-    }
 
-    // 3) 已保存预设
-    for (let i = 0; i < this.presets.length; i++) {
-      const p = this.presets[i]
-      // 已经在 candidates 里(USB/mDNS hit) 不再重复
-      const dup = candidates.some((c: ConnectCandidate): boolean =>
-        c.host === p.host && c.port === p.port)
-      if (!dup) {
-        candidates.push({ host: p.host, port: p.port, label: 'Saved' })
+      // 3) 已保存预设
+      for (let i = 0; i < this.presets.length; i++) {
+        const p = this.presets[i]
+        // 已经在 candidates 里(USB/mDNS hit) 不再重复
+        const dup = candidates.some((c: ConnectCandidate): boolean =>
+          c.host === p.host && c.port === p.port)
+        if (!dup) {
+          candidates.push({ host: p.host, port: p.port, label: 'Saved' })
+        }
       }
-    }
 
-    // 4) 手动输入的 host（advanced settings 里）
-    if (this.host.length > 0 && this.host !== '127.0.0.1' && this.host !== 'localhost') {
-      const dup = candidates.some((c: ConnectCandidate): boolean =>
-        c.host === this.host && c.port === this.port)
-      if (!dup) {
-        candidates.push({ host: this.host, port: this.port, label: 'Manual' })
+      // 4) 手动输入的 host（advanced settings 里）
+      if (this.host.length > 0 && this.host !== '127.0.0.1' && this.host !== 'localhost') {
+        const dup = candidates.some((c: ConnectCandidate): boolean =>
+          c.host === this.host && c.port === this.port)
+        if (!dup) {
+          candidates.push({ host: this.host, port: this.port, label: 'Manual' })
+        }
       }
     }
 
@@ -684,6 +695,7 @@ struct Index {
     this.cancelReconnect()
     this.stopStatsTimer()
     this.stopUsbWatch()
+    this.stopUsbWaitTimer()
     if (this.decoderRunning) {
       nativeStop()
       this.decoderRunning = false
@@ -694,6 +706,7 @@ struct Index {
     }
     this.connected = false
     this.connecting = false
+    this.paused = false
     this.streamWidth = 0
     this.streamHeight = 0
     this.currentTransport = ''
@@ -783,6 +796,92 @@ struct Index {
     }
   }
 
+  /** 统一的断开处理。区分四种来源：
+   *    - 用户主动 / Mac server-shutdown → 完全 idle 页（清画面、无重连、无暂停）
+   *    - autoReconnect=false → 进入 manual-wait 暂停态（保留画面，等用户点 Connect）
+   *    - autoReconnect=true + wifiDisabled=true → 进入 usb-wait 暂停态 + USB 1Hz probe
+   *    - autoReconnect=true + wifiDisabled=false → Wi-Fi reconnect ladder（原行为） */
+  private handleDisconnected(reason: string): void {
+    this.connecting = false
+    this.connected = false
+    this.stopStatsTimer()
+    this.stopUsbWatch()
+
+    // userInitiatedDisconnect / 服务端主动停 → 走 idle 路径，画面清掉
+    const isManualOrServerStop =
+      this.userInitiatedDisconnect || reason === REASON_SERVER_SHUTDOWN
+
+    if (this.decoderRunning) {
+      nativeStop()
+      this.decoderRunning = false
+    }
+
+    if (isManualOrServerStop) {
+      this.streamWidth = 0
+      this.streamHeight = 0
+      this.paused = false
+      this.stopUsbWaitTimer()
+      this.status = reason === REASON_SERVER_SHUTDOWN
+        ? I18n.s($r('app.string.status_server_stopped'))
+        : I18n.s($r('app.string.status_disconnected'))
+      this.userInitiatedDisconnect = false
+      // wifiDisabled 模式下也只探 USB（discoverAllTargets 会自动过滤），保持探测让用户重新连
+      this.startProbeTimer()
+      return
+    }
+
+    // 被动断开：根据 autoReconnect / wifiDisabled 决定后续
+    if (!this.autoReconnect) {
+      // 自动重连关：保留画面冻结，进 manual-wait 暂停态
+      this.paused = true
+      this.pausedHintKind = 'manual'
+      this.status = I18n.s($r('app.string.status_disconnected_reason'), reason)
+      this.stopUsbWaitTimer()
+      // 不清 streamWidth/streamHeight；用户点 Connect 重连后 onDisplayConfig 会触发 decoder 重启
+      return
+    }
+
+    if (this.wifiDisabled) {
+      // 仅 USB + 自动重连：进 usb-wait 暂停态，启 1Hz USB probe
+      this.paused = true
+      this.pausedHintKind = 'usb'
+      this.status = I18n.s($r('app.string.status_waiting_usb'))
+      this.startUsbWaitTimer()
+      return
+    }
+
+    // Wi-Fi 模式 + 自动重连：保持原 ladder 行为（短抖动场景）
+    this.paused = false
+    this.streamWidth = 0
+    this.streamHeight = 0
+    this.status = I18n.s($r('app.string.status_disconnected_reason'), reason)
+    this.scheduleReconnect()
+  }
+
+  /** USB-only 暂停态时启用：1Hz 探测 127.0.0.1:8888；通了就 doAutoConnect 恢复。 */
+  private startUsbWaitTimer(): void {
+    this.stopUsbWaitTimer()
+    this.usbWaitTimer = setInterval((): void => {
+      if (this.connected || this.connecting) return
+      this.probeServer('127.0.0.1', 8888).then((r: ProbeResult): void => {
+        if (!r.isSideScreen) return
+        if (this.connected || this.connecting) return
+        console.info(TAG, 'USB tunnel back up — auto-resuming')
+        this.stopUsbWaitTimer()
+        this.doAutoConnect().catch((e: Error): void => {
+          console.warn(TAG, `usb-wait resume: ${e.message}`)
+        })
+      }).catch((_: Error): void => { /* ignore */ })
+    }, 1000)
+  }
+
+  private stopUsbWaitTimer(): void {
+    if (this.usbWaitTimer >= 0) {
+      clearInterval(this.usbWaitTimer)
+      this.usbWaitTimer = -1
+    }
+  }
+
   private scheduleReconnect(): void {
     if (this.reconnectAttempts >= RECONNECT_DELAYS_MS.length) {
       this.status = I18n.s($r('app.string.status_failed_after'), RECONNECT_DELAYS_MS.length)
@@ -855,6 +954,8 @@ struct Index {
       showBattery: this.showBattery,
       overlayOpacity: this.overlayOpacity,
       settingsBtnPos: this.settingsBtnPos,
+      wifiDisabled: this.wifiDisabled,
+      autoReconnect: this.autoReconnect,
     } as SavedUiPrefs).catch((e: Error): void => console.warn(TAG, `saveUi: ${e.message}`))
   }
 
@@ -983,6 +1084,34 @@ struct Index {
     .width('100%')
     .margin({ bottom: 20 })
     .alignItems(HorizontalAlign.Start)
+  }
+
+  /** 暂停 overlay：盖在 XComponent 上面，半透明黑层 + 状态文字 + 提示。
+   *  hint 文案由 pausedHintKind 决定：'usb' = 等 USB 自动恢复 / 'manual' = 等用户点击。
+   *  Manual 模式下整个 overlay 可点击触发 doAutoConnect；
+   *  USB-wait 模式 hitTestBehavior=Transparent，让齿轮按钮 / surface 仍可点。 */
+  @Builder
+  PausedOverlay() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column().width('100%').height('100%').backgroundColor('#A0000000')
+      Column({ space: 12 }) {
+        Text($r('app.string.paused_overlay_text'))
+          .fontSize(28).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
+        Text(this.pausedHintKind === 'manual'
+          ? $r('app.string.paused_overlay_hint_manual')
+          : $r('app.string.paused_overlay_hint_usb'))
+          .fontSize(14).fontColor(COLOR_HINT)
+      }
+    }
+    .width('100%').height('100%')
+    .hitTestBehavior(this.pausedHintKind === 'manual' ? HitTestMode.Default : HitTestMode.Transparent)
+    .onClick((): void => {
+      if (this.pausedHintKind !== 'manual') return
+      if (this.connecting || this.connected) return
+      this.doAutoConnect().catch((e: Error): void => {
+        console.warn(TAG, `paused-tap reconnect: ${e.message}`)
+      })
+    })
   }
 
   @Builder
@@ -1235,6 +1364,27 @@ struct Index {
           .padding(16).backgroundColor(COLOR_PANEL_BG).borderRadius(12).width('100%')
           .alignItems(HorizontalAlign.Start)
 
+          // Auto Behavior（USB-only / Auto Reconnect）
+          Column() {
+            Text($r('app.string.settings_auto_title')).fontSize(17).fontWeight(FontWeight.Bold)
+              .fontColor(COLOR_TEXT).margin({ bottom: 12 }).width('100%')
+
+            this.StatToggleRow({
+              label: $r('app.string.settings_usb_only'),
+              hint: $r('app.string.settings_usb_only_hint'),
+              isOn: this.wifiDisabled,
+              onChange: (v: boolean): void => { this.wifiDisabled = v; this.persistUi() },
+            })
+            this.StatToggleRow({
+              label: $r('app.string.settings_auto_reconnect'),
+              hint: $r('app.string.settings_auto_reconnect_hint'),
+              isOn: this.autoReconnect,
+              onChange: (v: boolean): void => { this.autoReconnect = v; this.persistUi() },
+            })
+          }
+          .padding(16).backgroundColor(COLOR_PANEL_BG).borderRadius(12).width('100%')
+          .alignItems(HorizontalAlign.Start)
+
           // Saved Locations
           Column() {
             Row() {
@@ -1398,8 +1548,8 @@ struct Index {
       // 整页黑底
       Column().width('100%').height('100%').backgroundColor(COLOR_BG)
 
-      if (this.connected && this.streamWidth > 0 && this.streamHeight > 0) {
-        // 视频层
+      if ((this.connected || this.paused) && this.streamWidth > 0 && this.streamHeight > 0) {
+        // 视频层 — paused 时 XComponent 保留挂载，surface 自动留下最后一帧
         XComponent({
           id: 'mainSurface',
           type: XComponentType.SURFACE,
@@ -1418,8 +1568,13 @@ struct Index {
             }
           })
 
-        // Stats 浮层（任何一项 stat 开着才渲染）
-        if (this.hasAnyStat()) {
+        // 暂停 overlay（仅 paused 态显示，覆盖在最后一帧之上）
+        if (this.paused) {
+          this.PausedOverlay()
+        }
+
+        // Stats 浮层（任何一项 stat 开着才渲染）— 暂停时不显示，避免误导
+        if (!this.paused && this.hasAnyStat()) {
           this.StatsOverlay()
         }
 

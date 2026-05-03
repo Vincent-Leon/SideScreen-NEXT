@@ -22,6 +22,24 @@ func debugLog(_ message: String) {
     }
 }
 
+// MARK: - Server State Machine
+
+/// Server lifecycle. Transitions are serialized on the @MainActor.
+///
+/// - .idle → .listening: user clicks Start
+/// - .listening → .starting: client first connects (probe or real)
+/// - .starting → .streaming: virtualDisplay + capture ready, frames flowing
+/// - .starting → .listening: client disconnected before stream came up (e.g. probe)
+/// - .streaming → .listening: client disconnected (lock screen, USB pull)
+/// - .listening / .streaming → .stopping → .idle: user clicks Stop
+enum ServerState {
+    case idle
+    case listening
+    case starting
+    case streaming
+    case stopping
+}
+
 // MARK: - Gesture State Machine
 
 enum GestureState {
@@ -54,6 +72,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var settingsWindow: SettingsWindowController?
     var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
+
+    /// Server lifecycle state. All transitions on @MainActor.
+    @MainActor private var state: ServerState = .idle
+    /// In-flight stream startup task — cancellable so probe disconnects (or stopServer)
+    /// can interrupt before resources are created.
+    @MainActor private var pendingStartStream: Task<Void, Never>?
     /// Reentry guard: prevents double-Start race that creates a stranded second
     /// streamingServer (encoder pipes frames to it but its bind() failed).
     /// Always read/written on the main thread (where onToggleServer fires).
@@ -94,11 +118,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func setupSettingsObservers() {
-        // Observer cho gaming boost changes
+        // Observer cho gaming boost changes (chỉ áp dụng khi encoder đang chạy)
         settings.$gamingBoost
             .dropFirst() // Skip initial value
             .sink { [weak self] gamingBoost in
-                guard let self = self, self.settings.isRunning else { return }
+                guard let self = self, self.screenCapture != nil else { return }
                 print("🎮 Gaming Boost \(gamingBoost ? "ENABLED" : "DISABLED")")
                 self.screenCapture?.updateEncoderSettings(
                     bitrateMbps: self.settings.effectiveBitrate,
@@ -112,7 +136,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Publishers.CombineLatest(settings.$bitrate, settings.$quality)
             .dropFirst()
             .sink { [weak self] bitrate, quality in
-                guard let self = self, self.settings.isRunning, !self.settings.gamingBoost else { return }
+                guard let self = self, self.screenCapture != nil, !self.settings.gamingBoost else { return }
                 print("⚙️ Settings updated: \(bitrate)Mbps, \(quality)")
                 self.screenCapture?.updateEncoderSettings(
                     bitrateMbps: bitrate,
@@ -122,7 +146,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        // Observer cho rotation changes - send to connected client immediately
+        // Observer cho rotation changes - send to connected client immediately.
+        // streamingServer 在 .listening 起就存在，此处用 isRunning 判别即可（idle 时不发）。
         settings.$rotation
             .dropFirst()
             .sink { [weak self] rotation in
@@ -155,7 +180,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         settings.onToggleServer = { [weak self] in
             guard let self else { return }
             if self.settings.isRunning {
-                self.stopServer()
+                Task { [weak self] in
+                    await self?.stopServer()
+                }
                 return
             }
             // Guard against double-click / racing toggles before settings.isRunning
@@ -483,14 +510,198 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Start listener layer only — virtualDisplay + capture are lazy-built when a real
+    /// client connects (see `startStream`). This way lock-screen / USB-pull events
+    /// (which manifest as TCP disconnects) auto-tear-down the virtual display, and
+    /// reconnects auto-rebuild it, without leaving stranded副屏图标 on Mac desktop.
     func startServer() async {
         guard settings.hasScreenRecordingPermission else {
             await showPermissionAlert()
             return
         }
 
+        // ADB / HDC tunnels: useful from the moment we start listening so the client
+        // can find us via 127.0.0.1. setupADBReverse can fail silently (no adb).
+        await setupADBReverse()
+        setupHDCReverseOnce()
+        startHDCMonitor()
+
+        let server = StreamingServer(port: settings.port)
+        server.onClientConnected = { [weak self] in
+            guard let self = self else { return }
+            Task { @MainActor in
+                self.handleClientConnected()
+            }
+        }
+        server.onClientReady = { [weak self] in
+            guard let self = self else { return }
+            Task { @MainActor in
+                self.handleClientReady()
+            }
+        }
+        server.onClientDisconnected = { [weak self] in
+            guard let self = self else { return }
+            Task { @MainActor in
+                self.handleClientDisconnected()
+            }
+        }
+        server.onTouchEvent = { [weak self] x, y, action, pointerCount, x2, y2 in
+            self?.handleTouch(x: x, y: y, action: action, pointerCount: pointerCount, x2: x2, y2: y2)
+        }
+        server.onClientRotation = { [weak self] rotation in
+            guard let self = self else { return }
+            Task { @MainActor in
+                await self.handleClientRotation(rotation)
+            }
+        }
+        server.onStats = { [weak self] fps, mbps in
+            let captured = self
+            Task { @MainActor in
+                captured?.settings.currentFPS = fps
+                captured?.settings.currentBitrate = mbps
+            }
+        }
+        server.start()
+
+        await MainActor.run {
+            self.streamingServer = server
+            self.state = .listening
+            self.settings.isRunning = true
+        }
+
+        print("✅ Server listening on port \(settings.port) — waiting for client")
+    }
+
+    /// User-initiated Stop: notify any connected client (type=0x06), tear down stream
+    /// + listener, return to .idle. Cancels any in-flight startStream task to avoid
+    /// stranded virtualDisplay.
+    func stopServer() async {
+        await MainActor.run {
+            self.state = .stopping
+            // Cancel any in-flight stream startup (probe race window)
+            self.pendingStartStream?.cancel()
+        }
+
+        // Tell client this is a polite shutdown so it returns to idle (rather than
+        // entering USB-only paused state). Best-effort: brief sleep lets bytes flush
+        // before we close the socket.
+        streamingServer?.sendServerShutdown()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        // Wait for cancelled start task to finish its cleanup, if any.
+        if let task = await MainActor.run(body: { self.pendingStartStream }) {
+            await task.value
+        }
+
+        await MainActor.run {
+            self.forceStopServerSync()
+        }
+
+        print("⏹️ Server stopped")
+    }
+
+    /// Synchronous teardown — used by applicationWillTerminate (which can't await)
+    /// and by stopServer's main-actor cleanup phase. Skips sendServerShutdown.
+    @MainActor
+    private func forceStopServerSync() {
+        pendingStartStream?.cancel()
+        pendingStartStream = nil
+        tearDownStreamArtifacts()
+        streamingServer?.stop()
+        streamingServer = nil
+        stopHDCMonitor()
+        state = .idle
+        settings.isRunning = false
+        settings.clientConnected = false
+    }
+
+    // MARK: - Stream lifecycle (lazy-built on real client connect)
+
+    /// 一个 TCP 连接进来——我们尚不知是 probe 还是真实 client。仅切到 .starting，
+    /// 等 onClientReady（首条上行消息）才真正分配 virtualDisplay + capture。
+    /// Probe 永远不会发任何消息，所以不会触发 .starting → 资源分配，从根本避免
+    /// 每次 probe 都建/拆一次副屏的闪烁。
+    @MainActor
+    private func handleClientConnected() {
+        switch state {
+        case .listening:
+            state = .starting
+            pendingStartStream?.cancel()  // defensive
+
+        case .starting:
+            // probe 后紧接真实 client，或者并发探测。state 已经是 .starting，无事可做。
+            // 等 receiveLoop 触发 onClientReady。
+            break
+
+        case .streaming:
+            // 快速换 client（旧 client 断开 + 新 client 连上的极小窗口期）：stream 已起，
+            // 只需要给新 client 推 displayConfig + 强制下一帧 IDR。
+            screenCapture?.requestKeyframe()
+            streamingServer?.sendDisplaySize()
+            settings.clientConnected = true
+
+        case .idle, .stopping:
+            debugLog("client connect ignored — state=\(state)")
+        }
+    }
+
+    /// 收到客户端首条上行消息（rotation/ping）——确认是真实 client，开始分配资源。
+    /// Probe 不会触发本回调，所以这里跑到的都是真 client。
+    @MainActor
+    private func handleClientReady() {
+        switch state {
+        case .starting:
+            pendingStartStream?.cancel()
+            pendingStartStream = Task { @MainActor [weak self] in
+                await self?.startStreamBody()
+            }
+        case .streaming:
+            // 已经在跑。可能是新 client 切换后又发了一条 rotation/ping。
+            // 推一次 displayConfig + IDR 让它立刻能解码当前帧。
+            screenCapture?.requestKeyframe()
+            streamingServer?.sendDisplaySize()
+        case .listening, .idle, .stopping:
+            debugLog("client ready ignored — state=\(state)")
+        }
+    }
+
+    @MainActor
+    private func handleClientDisconnected() {
+        switch state {
+        case .starting:
+            // Probe disconnected (or stream startup failed during sleep). Cancel the
+            // in-flight task; nothing was created yet so tearDown is a no-op.
+            pendingStartStream?.cancel()
+            // Don't await here — let it self-clean. Just transition state.
+            tearDownStreamArtifacts()
+            state = .listening
+            settings.clientConnected = false
+
+        case .streaming:
+            // Lock screen / USB pull / network drop. Auto-pause: kill virtualDisplay
+            // + capture, keep listener alive for next reconnect.
+            tearDownStreamArtifacts()
+            state = .listening
+            settings.clientConnected = false
+            print("ℹ️ Client disconnected — virtual display destroyed, listener kept")
+
+        case .listening, .idle, .stopping:
+            settings.clientConnected = false
+        }
+    }
+
+    /// Body of the cancellable startStream task. Builds virtualDisplay + capture +
+    /// kicks off encoding. On cancellation or failure, leaves the system in a clean
+    /// .listening state (or .idle if stopServer cancelled us).
+    @MainActor
+    private func startStreamBody() async {
+        defer { pendingStartStream = nil }
+
+        // No probe-eat sleep: handleClientReady gates entry on first real client
+        // message (rotation/ping). Probes never get here.
+        guard !Task.isCancelled, state == .starting else { return }
+
         do {
-            // Create virtual display and run ADB setup in parallel
             virtualDisplayManager = VirtualDisplayManager()
             let size = settings.resolutionSize
             try virtualDisplayManager?.createDisplay(
@@ -500,37 +711,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 hiDPI: settings.hiDPI,
                 name: "SideScreen"
             )
+            try? virtualDisplayManager?.disableMirrorMode()
+            settings.displayCreated = true
 
-            // Disable mirror mode (may fail if already in extend mode)
+            // Give SCShareableContent time to register the new display.
             do {
-                try virtualDisplayManager?.disableMirrorMode()
+                try await Task.sleep(nanoseconds: 500_000_000)
             } catch {
-                // Not critical - continue anyway
+                tearDownStreamArtifacts()
+                return
             }
-
-            await MainActor.run {
-                settings.displayCreated = true
-            }
-
-            // Run ADB setup and display init wait in parallel
-            // ADB must complete before server starts (fixes race condition on first install)
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { await self.setupADBReverse() }
-                group.addTask { try? await Task.sleep(nanoseconds: 500_000_000) }
+            guard !Task.isCancelled, state == .starting else {
+                tearDownStreamArtifacts()
+                return
             }
 
             virtualDisplayManager?.restoreDisplayPosition()
 
-            // Verify display is registered in the system
-            if let vdm = virtualDisplayManager {
-                let registered = vdm.verifyDisplayRegistered()
-                if !registered {
-                    debugLog("WARNING: Virtual display not found in online display list — capture may fail")
-                }
+            if let vdm = virtualDisplayManager, !vdm.verifyDisplayRegistered() {
+                debugLog("WARNING: Virtual display not found in online display list — capture may fail")
             }
 
-            // Setup capture
-            guard let displayID = virtualDisplayManager?.displayID else { return }
+            guard let displayID = virtualDisplayManager?.displayID else {
+                debugLog("startStream: no displayID after create")
+                tearDownStreamArtifacts()
+                state = .listening
+                return
+            }
+
             screenCapture = try await ScreenCapture()
             screenCapture?.onCaptureMethodChanged = { [weak self] method in
                 guard let self = self else { return }
@@ -541,52 +749,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             try await screenCapture?.setupForVirtualDisplay(displayID, refreshRate: settings.effectiveRefreshRate)
 
-            // Setup server
-            streamingServer = StreamingServer(port: settings.port)
-            // Use physical pixel dimensions from the live display (accounts for HiDPI 2x scaling)
+            guard !Task.isCancelled, state == .starting else {
+                tearDownStreamArtifacts()
+                return
+            }
+
             let physWidth = screenCapture?.displayWidth ?? size.width
             let physHeight = screenCapture?.displayHeight ?? size.height
             streamingServer?.setDisplaySize(width: physWidth, height: physHeight, rotation: settings.rotation)
-            streamingServer?.onClientConnected = { [weak self] in
-                guard let self = self else { return }
-                // 强制下一帧编为 IDR — GOP 模式下，新 client 连接后必须立刻拿到关键帧才能解码
-                self.screenCapture?.requestKeyframe()
-                Task { @MainActor in
-                    self.settings.clientConnected = true
-                }
-            }
+            streamingServer?.sendDisplaySize()
 
-            streamingServer?.onClientDisconnected = { [weak self] in
-                guard let self = self else { return }
-                Task { @MainActor in
-                    self.settings.clientConnected = false
-                    if self.settings.stopOnDisconnect && self.settings.isRunning {
-                        debugLog("Client disconnected and stopOnDisconnect=true → stopping server")
-                        self.stopServer()
-                    }
-                }
-            }
-
-            streamingServer?.onTouchEvent = { [weak self] x, y, action, pointerCount, x2, y2 in
-                self?.handleTouch(x: x, y: y, action: action, pointerCount: pointerCount, x2: x2, y2: y2)
-            }
-
-            streamingServer?.onClientRotation = { [weak self] rotation in
-                guard let self = self else { return }
-                Task { @MainActor in
-                    await self.handleClientRotation(rotation)
-                }
-            }
-
-            streamingServer?.onStats = { [weak self] fps, mbps in
-                let captured = self
-                Task { @MainActor in
-                    captured?.settings.currentFPS = fps
-                    captured?.settings.currentBitrate = mbps
-                }
-            }
-
-            streamingServer?.start()
             screenCapture?.startStreaming(
                 to: streamingServer,
                 bitrateMbps: settings.effectiveBitrate,
@@ -594,50 +766,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 gamingBoost: settings.gamingBoost,
                 frameRate: settings.effectiveRefreshRate
             )
+            screenCapture?.requestKeyframe()
 
-            // HarmonyOS 设备：自动 hdc rport（与上游 setupADBReverse 并存，互不干扰）
-            // 巡检循环会处理 MatePad 拔插 / hap 重装造成的隧道丢失
-            setupHDCReverseOnce()
-            startHDCMonitor()
-
-            await MainActor.run {
-                settings.isRunning = true
-            }
-
-            print("✅ Server started on port \(settings.port)")
+            state = .streaming
+            settings.clientConnected = true
+            debugLog("Stream started for client (\(physWidth)x\(physHeight))")
         } catch {
-            print("❌ Failed to start: \(error)")
-            await MainActor.run {
-                settings.isRunning = false
-                settings.displayCreated = false
-
-                let alert = NSAlert()
-                alert.messageText = "Failed to Start Server"
-                alert.informativeText = error.localizedDescription
-                alert.alertStyle = .critical
-                alert.runModal()
+            debugLog("startStream failed: \(error.localizedDescription)")
+            tearDownStreamArtifacts()
+            if state == .starting {
+                state = .listening
             }
         }
     }
 
-    func stopServer() {
-        // Save display position before destroying
+    /// Idempotent: stops streaming, destroys virtualDisplay, clears state. Safe to
+    /// call from any state (no-op if nothing to tear down).
+    @MainActor
+    private func tearDownStreamArtifacts() {
+        if virtualDisplayManager == nil && screenCapture == nil { return }
         virtualDisplayManager?.saveDisplayPosition()
-
-        // 停 HDC 巡检（不主动卸 rport — 让 hdc daemon 自然回收）
-        stopHDCMonitor()
-
         screenCapture?.stopStreaming()
-        streamingServer?.stop()
+        screenCapture = nil
         virtualDisplayManager?.destroyDisplay()
-
-        settings.isRunning = false
+        virtualDisplayManager = nil
         settings.displayCreated = false
-        settings.clientConnected = false
         settings.currentFPS = 0
         settings.currentBitrate = 0
-
-        print("⏹️ Server stopped")
     }
 
     /// 响应客户端发起的旋转请求：保持 listener / streamingServer 活着，只重建虚拟
@@ -647,8 +802,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleClientRotation(_ requestedDegrees: Int) async {
         let normalized = ((requestedDegrees % 360) + 360) % 360
         let snapped = (normalized / 90) * 90  // 0/90/180/270
-        if !settings.isRunning {
-            debugLog("ignoring client rotation \(snapped)°: server not running")
+        if state != .streaming {
+            debugLog("ignoring client rotation \(snapped)°: state=\(state)")
             return
         }
 
@@ -669,12 +824,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         debugLog("client physically \(snapped)° (base=\(baseW)x\(baseH)) → applying rotation \(targetRotation)°")
         settings.rotation = targetRotation
 
-        // Tear down capture + virtual display
-        screenCapture?.stopStreaming()
-        screenCapture = nil
-        virtualDisplayManager?.saveDisplayPosition()
-        virtualDisplayManager?.destroyDisplay()
-        virtualDisplayManager = nil
+        // Mark transient .starting so concurrent client connect/disconnect handlers
+        // don't race with our teardown/recreate.
+        state = .starting
+
+        // Tear down capture + virtual display via shared helper.
+        tearDownStreamArtifacts()
 
         do {
             // 重新创建（resolutionSize getter 已根据 rotation 自动 swap W/H）
@@ -711,9 +866,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             )
             // 客户端 decoder 在拿到 displayConfig 后会重启,需要立刻拿到 IDR
             screenCapture?.requestKeyframe()
+            settings.displayCreated = true
+            state = .streaming
             debugLog("rotation: capture restarted at \(physW)x\(physH)")
         } catch {
             debugLog("rotation: rebuild failed: \(error)")
+            tearDownStreamArtifacts()
+            state = .listening
         }
     }
 
@@ -1113,8 +1272,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Stop momentum scrolling
         stopMomentumScroll()
 
-        // Stop server and cleanup
-        stopServer()
+        // Synchronous teardown — applicationWillTerminate can't await.
+        // App is exiting, no need for the polite shutdown notice.
+        forceStopServerSync()
 
         // Cancel all combine subscriptions
         cancellables.removeAll()

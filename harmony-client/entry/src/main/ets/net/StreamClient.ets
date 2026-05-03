@@ -24,6 +24,9 @@ const TAG: string = '[StreamClient]'
 const PING_INTERVAL_MS: number = 1000
 const CONNECT_TIMEOUT_MS: number = 5000
 
+/** 特殊 disconnect 原因常量。Index 用 reason 来区分主动 / 服务端主动 / 异常断开。 */
+export const REASON_SERVER_SHUTDOWN: string = 'server-shutdown'
+
 export interface StreamClientCallbacks {
   onConnected: () => void
   onDisconnected: (reason: string) => void
@@ -31,6 +34,9 @@ export interface StreamClientCallbacks {
   onVideoFrame: (annexbHevc: Uint8Array) => void
   onLatency: (rttMs: number) => void
   onError: (err: Error) => void
+  /** Mac 用户主动 Stop 时触发（type=0x06）。紧接着 socket 会被服务端关掉，
+   *  onDisconnected 也会触发，reason 会是 REASON_SERVER_SHUTDOWN。 */
+  onServerShutdown: () => void
 }
 
 export class StreamClient {
@@ -40,6 +46,8 @@ export class StreamClient {
   private connected: boolean = false
   /** ping nanos (字符串化) → 发送时本地 Date.now() ms，用于算 RTT */
   private outstandingPings: Map<string, number> = new Map()
+  /** Mac 在关 socket 之前发了 type=0x06 → handleClose 知道这是有意停服 */
+  private serverShutdownReceived: boolean = false
   private cb: StreamClientCallbacks
 
   constructor(callbacks: StreamClientCallbacks) {
@@ -65,6 +73,7 @@ export class StreamClient {
       await this.disconnect()
     }
     this.parser.reset()
+    this.serverShutdownReceived = false
 
     const tcp = socket.constructTCPSocketInstance()
     this.tcp = tcp
@@ -146,6 +155,11 @@ export class StreamClient {
           self.cb.onLatency(Date.now() - sentMs)
         }
       },
+      onServerShutdown: (): void => {
+        console.info(TAG, 'received server-shutdown notice (type=0x06)')
+        self.serverShutdownReceived = true
+        self.cb.onServerShutdown()
+      },
     }
     try {
       this.parser.feed(chunk, handler)
@@ -163,7 +177,9 @@ export class StreamClient {
     }
     this.connected = false
     this.stopPingTimer()
-    this.cb.onDisconnected(reason)
+    // 如果先收到了 0x06，那么这次 close 必然是服务端主动停 — 用专属 reason。
+    const finalReason = this.serverShutdownReceived ? REASON_SERVER_SHUTDOWN : reason
+    this.cb.onDisconnected(finalReason)
   }
 
   private startPingTimer(): void {

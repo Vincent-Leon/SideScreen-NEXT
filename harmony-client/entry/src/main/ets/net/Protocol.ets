@@ -22,6 +22,9 @@ export const TYPE_DISPLAY_CONFIG: number = 0x01
 export const TYPE_TOUCH: number = 0x02
 export const TYPE_PING: number = 0x04
 export const TYPE_PONG: number = 0x05
+/** M→T, 0 字节 payload。Mac 用户主动 Stop 时发，区别于锁屏/USB 拔等被动断。
+ *  收到后客户端应回 idle 而非进入暂停态/自动重连。 */
+export const TYPE_SERVER_SHUTDOWN: number = 0x06
 
 export const TOUCH_ACTION_DOWN: number = 0
 export const TOUCH_ACTION_MOVE: number = 1
@@ -61,6 +64,7 @@ export interface ProtocolHandler {
   onDisplayConfig: (config: DisplayConfig) => void
   onVideoFrame: (annexbHevc: Uint8Array) => void
   onPong: (nanos: bigint) => void
+  onServerShutdown: () => void
 }
 
 export class ProtocolError extends Error {
@@ -175,6 +179,13 @@ export class ProtocolParser {
       const nanos = view.getBigInt64(1, true)  // LE
       this.consume(9)
       handler.onPong(nanos)
+      return true
+    }
+
+    if (type === TYPE_SERVER_SHUTDOWN) {
+      // 1 字节, 无 payload
+      this.consume(1)
+      handler.onServerShutdown()
       return true
     }
 

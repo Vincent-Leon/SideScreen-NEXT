@@ -19,8 +19,12 @@
 | `0x00` | M→T | `int32 size`（**大端**）+ `size` bytes Annex-B HEVC | 5 + size |
 | `0x01` | M→T | `int32 width` + `int32 height` + `int32 rotation`（全部**大端**） | 13 |
 | `0x02` | T→M | `byte n`（指数）+ n × (`float32 x` + `float32 y`，**小端**) + `int32 action`（小端，0=down/1=move/2=up） | 1 指 14 / 2 指 22 |
+| `0x03` | T→M | `int32 rotation`（**小端**，0/90/180/270） | 5 |
 | `0x04` | T→M | `int64 nanos`（**小端**，`System.nanoTime()`） | 9 |
 | `0x05` | M→T | `int64 nanos`（**小端**，原样回显 ping 的 8 字节） | 9 |
+| `0x06` | M→T | （无 payload） | 1 |
+
+> 📌 **type=0x06 server-shutdown**：Mac 端"用户主动 Stop"时，先发 0x06 再关 socket。客户端收到此消息后应区别于 USB 拔出 / 锁屏断开，回到 idle 连接页而非自动重连/暂停态。本 fork 新增（上游无），鸿蒙端实现见 [Protocol.ets](harmony-client/entry/src/main/ets/net/Protocol.ets) `TYPE_SERVER_SHUTDOWN`。
 
 > ✅ **9 字节心跳验证**：抓包看到的 9 字节包正是 type=0x04 ping。源码 [StreamClient.kt:223-228](https://github.com/tranvuongquocdat/SideScreen/blob/main/AndroidClient/app/src/main/java/com/sidescreen/app/StreamClient.kt#L223-L228) 写得很清楚：`ByteBuffer.allocate(9).order(ByteOrder.LITTLE_ENDIAN); buffer.put(4.toByte()); buffer.putLong(System.nanoTime())`。MainActivity.kt:864-869 在连接后启动 1 Hz 定时器持续发。
 

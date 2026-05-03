@@ -350,20 +350,6 @@ struct SettingsView: View {
                                         .foregroundColor(.secondary)
                                 }
 
-                                Divider().padding(.vertical, 4)
-
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Stop on Disconnect")
-                                            .font(.system(size: 12, weight: .medium))
-                                        Text("Tear down virtual display when client disconnects")
-                                            .font(.system(size: 10))
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Spacer()
-                                    Toggle("", isOn: $settings.stopOnDisconnect)
-                                        .labelsHidden()
-                                }
                             }
                         }
 
@@ -899,12 +885,6 @@ class DisplaySettings: ObservableObject {
     @Published var touchEnabled: Bool {
         didSet { save("touchEnabled", touchEnabled) }
     }
-    /// 客户端断连后自动停止服务（释放虚拟显示器、停采集，回到 Idle）。
-    /// 默认 false，保持上游行为：客户端断了 server 还在等下一个客户端。
-    @Published var stopOnDisconnect: Bool {
-        didSet { save("stopOnDisconnect", stopOnDisconnect) }
-    }
-
     // Runtime state (not persisted)
     @Published var displayCreated = false
     @Published var clientConnected = false
@@ -930,7 +910,6 @@ class DisplaySettings: ObservableObject {
         self.customWidth = defaults.object(forKey: keyPrefix + "customWidth") as? Int ?? 1920
         self.customHeight = defaults.object(forKey: keyPrefix + "customHeight") as? Int ?? 1200
         self.touchEnabled = defaults.object(forKey: keyPrefix + "touchEnabled") as? Bool ?? true
-        self.stopOnDisconnect = defaults.bool(forKey: keyPrefix + "stopOnDisconnect")
 
         print("Loaded settings: \(resolution) @ \(refreshRate)Hz, bitrate=\(bitrate), quality=\(quality)")
     }

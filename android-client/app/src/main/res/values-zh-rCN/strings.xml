@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">副屏</string>
+    <string name="app_subtitle">把你的平板变成第二块显示器</string>
+
+    <!-- Connection checklist -->
+    <string name="checklist_title">连接条件</string>
+    <string name="check_developer_mode">开发者模式已开</string>
+    <string name="check_usb_debugging">USB 调试已开</string>
+    <string name="check_usb_cable">USB 已连接</string>
+    <string name="check_mac_server">Mac 服务运行中</string>
+
+    <!-- Buttons -->
+    <string name="btn_connect">连接</string>
+    <string name="btn_disconnect">断开</string>
+    <string name="btn_done">完成</string>
+    <string name="btn_advanced_show">高级设置</string>
+    <string name="btn_advanced_hide">收起高级设置</string>
+    <string name="btn_reset_overlay">重置浮层</string>
+    <string name="btn_reset_button">重置按钮</string>
+    <string name="btn_reset_overlay_position">重置浮层位置</string>
+
+    <!-- Status messages -->
+    <string name="status_ready">就绪，可以连接</string>
+    <string name="status_not_ready">未满足连接条件</string>
+    <string name="status_connecting">正在连接…</string>
+    <string name="status_connected">已连接，投屏中</string>
+    <string name="status_disconnected">已断开</string>
+    <string name="status_failed">连接失败</string>
+    <string name="status_screen_off">屏幕已关，已暂停</string>
+    <string name="status_reconnect_attempt">第 %1$d/%2$d 次重连，%3$d 秒后…</string>
+
+    <!-- Error messages -->
+    <string name="err_title">连接错误</string>
+    <string name="err_enter_host">请输入主机地址</string>
+    <string name="err_mac_not_running">Mac 端服务未运行。\n\n请先在 Mac 上启动 Side Screen.app。</string>
+    <string name="err_network_unreachable">无法连接到 Mac。\n\n请确认 USB 数据线已接好，且 adb reverse 已配置。</string>
+
+    <!-- Settings dialog -->
+    <string name="settings_title">显示设置</string>
+    <string name="settings_show_stats">显示统计</string>
+    <string name="settings_show_stats_long">显示状态浮层</string>
+    <string name="settings_show_stats_subtitle">帧率、码率、分辨率</string>
+    <string name="settings_show_stats_subtitle_long">显示帧率、码率与分辨率</string>
+    <string name="settings_overlay_opacity">浮层透明度</string>
+    <string name="settings_button_position">设置按钮位置</string>
+
+    <!-- Stats overlay labels -->
+    <string name="stats_fps">帧率</string>
+    <string name="stats_bitrate">码率</string>
+    <string name="stats_resolution">分辨率</string>
+    <string name="stats_rtt">延迟</string>
+
+    <!-- Orientation labels -->
+    <string name="orientation_portrait">竖屏</string>
+    <string name="orientation_portrait_flipped">竖屏（翻转）</string>
+    <string name="orientation_landscape">横屏</string>
+    <string name="orientation_landscape_flipped">横屏（翻转）</string>
+</resources>

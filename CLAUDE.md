@@ -4,16 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project goal
 
-让 MatePad mini（HarmonyOS NEXT）作为 MacBook 的低延迟有线 / Wi-Fi 副屏，基于开源 [SideScreen](https://github.com/tranvuongquocdat/SideScreen)（MIT）的协议适配鸿蒙端。
+让华为平板（**安卓鸿蒙和纯血鸿蒙**）作为 MacBook 的低延迟副屏，基于开源 [SideScreen](https://github.com/tranvuongquocdat/SideScreen)（MIT）派生。
 
-## Repository layout（两子项目并存）
+## Repository layout（三子项目并存）
 
 ```
 SideScreen-NEXT/
 ├── PROJECT_BRIEF.md      # 用户实测背景 + 规划（早期分析，部分结论已被 PROTOCOL.md §5 修正）
 ├── PROTOCOL.md           # 协议规范（已逆向 + 实测 + 字节序确定）
 ├── machost-fork/         # Mac Host fork（基于上游 0.6.8 = commit 049caf8）
-└── harmony-client/       # 鸿蒙端客户端（DevEco 项目，包名 tech.visionflow.sidescreennext）
+├── harmony-client/       # HarmonyOS NEXT 客户端（DevEco，包名 tech.visionflow.sidescreennext）
+└── android-client/       # Android 客户端 fork（基于上游 0.6.8 = commit 049caf8）
+                          # 用途：HMOS 2.x（MatePad Paper），及任意 Android 8.0+ 平板
 ```
 
 ## Build / install
@@ -53,6 +55,26 @@ hdc shell "hilog -x" | grep -E "JSAPP.*sidescreennext"
 ```
 
 DevEco 项目 SDK：targetSdkVersion=API 23（DevEco 自带），compatibleSdkVersion=API 12（覆盖 MatePad mini API 22+ 设备）。
+
+### Android 端（android-client/）
+
+Gradle 项目，最低 Android 8.0 (API 26)。从上游 fork，本地 Mac 端协议无变更，可直连本仓库 machost-fork。
+
+```bash
+cd android-client
+./gradlew assembleDebug
+# APK 路径：app/build/outputs/apk/debug/app-debug.apk
+
+# MatePad Paper / 任意 Android 设备安装
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+
+# HMOS 2.x 设备（MatePad Paper 走 hdc 而不是 adb）
+hdc install app/build/outputs/apk/debug/app-debug.apk
+```
+
+**HMOS 2.x 兼容性**：HarmonyOS 2.x 基于 AOSP 应用层，可运行 Android APK。MatePad Paper（HMOS 2.1）是首要目标设备，e-ink 屏的渲染节流由系统/驱动负责，APK 不需特殊改造即可运行（首期）。
+
+**fork provenance**：上游 commit 049caf8（v0.6.8），与 machost-fork 同基线。harmony-client 这边的 UX 改动（mDNS、USB 优先、状态浮层、自动重连等）尚**未** port 到 Android 端，待后续按需迁移（详见 `~/.claude/plans/matepad-paper-bright-corbato.md` 的 porting backlog）。
 
 ## Architecture
 

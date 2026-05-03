@@ -1642,13 +1642,18 @@ struct Index {
               this.decoderRunning = false
             }
           })
+
+        // 触控捕获层：透明 Column 盖在 XComponent 之上接 onTouch（XComponent
+        // SURFACE 类型在 ArkTS 层不响应 .onTouch，必须借另一个组件吃事件）。
+        // 透明 + 默认 hitTest，让 Stack 后渲染的 paused overlay / 齿轮按钮 / stats 浮层
+        // 能正常截获其覆盖区域的点击。
+        Column()
+          .width('100%').height('100%')
           .onAreaChange((_old: Area, newArea: Area): void => {
-            // 缓存 XComponent 当前尺寸用于触控坐标归一化（onTouch 用 vp 单位）
             this.surfaceWidthVp = Number(newArea.width)
             this.surfaceHeightVp = Number(newArea.height)
           })
           .onTouch((event: TouchEvent): void => {
-            // paused 态不发触控（socket 可能已断；也避免冻结画面里乱点）
             if (this.paused) return
             this.handleTouch(event)
           })

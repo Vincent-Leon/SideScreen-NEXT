@@ -1,0 +1,60 @@
+/*
+ * Build profile template — 复制本文件为 build-profile.json5 并填入本机路径。
+ *
+ * 两种签名场景：
+ *
+ *  A) 本地开发（hdc install -r 装到自己设备）
+ *     用 DevEco 的"自动签名"：Project Structure ▸ Project ▸ Signing Configs ▸
+ *     勾上 "Automatically generate signature"。DevEco 会在 ~/.ohos/config/ 下
+ *     生成 default_<projname>_<hash>.{cer,p12,p7b}，并把路径密码自动写回
+ *     build-profile.json5。生成后参照下面 "default" 配置补完。
+ *
+ *  B) AGC 发布签名（上架华为应用市场）
+ *     在 AppGallery Connect 申请 release cert + profile，下载到 ~/.ohos/config/
+ *     的某个目录下（路径自定）。把下面 "material" 改成 release 配置即可。
+ *     注意：AGC release profile 需要在 AGC 后台把测试设备 fingerprint 注册进
+ *     trust list，否则 hdc install 会报 9568322 "not trusted app source"。
+ *
+ * 不论哪种签名，本文件都不要提交到仓库 — .gitignore 已排除。
+ */
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/<YOU>/.ohos/config/<your-cert>.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "<DevEco-encrypted-password>",
+          "profile": "/Users/<YOU>/.ohos/config/<your-profile>.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/<YOU>/.ohos/config/<your-keystore>.p12",
+          "storePassword": "<DevEco-encrypted-password>"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "6.1.0(23)",
+        "compatibleSdkVersion": "5.0.0(12)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      { "name": "debug" },
+      { "name": "release", "buildOption": { "debuggable": false } }
+    ]
+  },
+  "modules": [
+    { "name": "entry", "srcPath": "./entry", "targets": [{ "name": "default", "applyToProducts": ["default"] }] }
+  ]
+}

@@ -16,6 +16,17 @@ machost-fork/.build/
 machost-fork/.swiftpm/
 machost-fork/Package.resolved
 
+# Android 端构建工件 / IDE 缓存（可重生成）
+android-client/.gradle/
+android-client/.idea/
+android-client/build/
+android-client/app/build/
+android-client/local.properties
+android-client/.kotlin/
+*.apk
+*.aab
+*.keystore
+
 # 发布二进制（.app/.hap），通过 GitHub Releases 分发
 release/
 

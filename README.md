@@ -1,6 +1,6 @@
 # SideScreen-NEXT
 
-把 HarmonyOS NEXT 平板变成 Mac 的低延迟副屏。
+把华为平板变成 Mac 的低延迟副屏。
 
 USB-C 模式延迟可降至 30 ms 以内，Wi-Fi LAN 模式约 60–80 ms。
 
@@ -23,6 +23,11 @@ SideScreen-NEXT/
 ├── harmony-client/    HarmonyOS NEXT 端（ArkTS + C++ NAPI）
 │   ├── ets 层：UI / 协议 / mDNS 扫描 / 持久化
 │   └── cpp 层：OH_VideoDecoder（HEVC 硬解）+ XComponent SURFACE 渲染
+│
+├── android-client/    Android 端（Kotlin，上游 0.6.8 fork）
+│   └── 覆盖 HMOS 2.x（MatePad Paper 电纸书，APK via AOSP 兼容层）
+│       及任意 Android 8.0+ 平板。harmony-client 的 UX 改进尚未 port，
+│       仅协议层与上游一致，可直连本仓库 machost-fork。
 │
 ├── PROTOCOL.md        线协议规范（type 0/1/2/3/4/5）
 ├── PROJECT_BRIEF.md   项目调研与决策记录
@@ -72,6 +77,23 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 ```
 
 > hdc 调试证书 90 天过期，到期后用 DevEco Studio 重签即可。
+
+---
+
+## Android 端：从源码构建
+
+依赖：Android Studio / Gradle 8+，Android SDK（API 26+），HEVC 硬解码（绝大多数 2017 后的 SoC 都支持）。
+
+```bash
+cd android-client
+./gradlew assembleDebug
+# Android 设备
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+# HMOS 2.x 设备（如 MatePad Paper）走 hdc
+hdc install app/build/outputs/apk/debug/app-debug.apk
+```
+
+> 当前为上游 0.6.8 直 fork，harmony-client 这边的 UX 改进（mDNS 自动发现、USB 优先、状态浮层、自动重连等）尚未 port，**仅协议层与上游一致**——可直连本仓库 `machost-fork` 推流。
 
 ---
 

@@ -71,6 +71,35 @@ class MainActivity : AppCompatActivity() {
     @Volatile
     private var isConnecting = false
 
+    // Endpoint requested by the most recent connect() call; persisted on success.
+    private var pendingConnectHost: String? = null
+    private var pendingConnectPort: Int? = null
+
+    // mDNS one-shot scan; null when no scan is in flight.
+    private var mdns: MdnsDiscovery? = null
+
+    // Auto-reconnect state. Mirrors harmony-client Index.ets ladder (3s/5s/8s).
+    // userInitiatedDisconnect blocks reconnect when the user taps Disconnect.
+    // autoDisconnectedByLifecycle marks "screen-off / app-paused" disconnects so
+    // we can transparently reconnect when the user comes back.
+    private val reconnectDelaysMs = listOf(3_000L, 5_000L, 8_000L)
+    private var reconnectAttempt = 0
+    private var reconnectRunnable: Runnable? = null
+    private var userInitiatedDisconnect = false
+    private var autoDisconnectedByLifecycle = false
+
+    // Screen on/off broadcast receiver — drives lock-screen disconnect and
+    // resume reconnect. Registered in onCreate, unregistered in onDestroy.
+    private val screenStateReceiver =
+        object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> handleScreenOff()
+                    Intent.ACTION_SCREEN_ON -> handleScreenOn()
+                }
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -105,6 +134,70 @@ class MainActivity : AppCompatActivity() {
         restoreOverlayPosition()
         restoreSettingsButtonPosition()
         startChecklistUpdates()
+
+        // Wire lock-screen / wake-up signals so the stream pauses cleanly
+        // and resumes on its own without forcing a manual reconnect.
+        val screenFilter =
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            }
+        registerReceiver(screenStateReceiver, screenFilter)
+    }
+
+    private fun handleScreenOff() {
+        if (!isConnected) return
+        log("📴 Screen off — auto-disconnecting stream")
+        autoDisconnectedByLifecycle = true
+        // Treat as non-user disconnect (no userInitiatedDisconnect flag set);
+        // disconnect() tears down streamClient, which fires the
+        // onConnectionStatus(connected=false) callback. We block reconnect
+        // there by checking autoDisconnectedByLifecycle.
+        disconnect()
+    }
+
+    private fun handleScreenOn() {
+        if (!autoDisconnectedByLifecycle) return
+        autoDisconnectedByLifecycle = false
+        val h = prefs.lastHost.ifBlank { "127.0.0.1" }
+        val p = if (prefs.lastPort > 0) prefs.lastPort else 8888
+        log("📲 Screen on — auto-reconnecting to $h:$p")
+        stopChecklistUpdates()
+        connect(h, p)
+    }
+
+    private fun cancelReconnect() {
+        reconnectRunnable?.let { checklistHandler.removeCallbacks(it) }
+        reconnectRunnable = null
+        reconnectAttempt = 0
+    }
+
+    /**
+     * Schedule the next reconnect attempt using the harmony-client ladder
+     * (3s / 5s / 8s). After the third attempt, give up — the user can tap
+     * CONNECT manually. Cancellation paths: cancelReconnect() is called from
+     * the user-initiated Disconnect button, on successful (re)connect, and
+     * on lifecycle teardown.
+     */
+    private fun scheduleReconnect() {
+        if (userInitiatedDisconnect) return
+        if (autoDisconnectedByLifecycle) return // resume path will handle it
+        if (reconnectAttempt >= reconnectDelaysMs.size) {
+            log("⚠️ Auto-reconnect: gave up after $reconnectAttempt attempts")
+            return
+        }
+        val delay = reconnectDelaysMs[reconnectAttempt]
+        reconnectAttempt++
+        log("🔁 Auto-reconnect attempt $reconnectAttempt in ${delay}ms")
+        val r =
+            Runnable {
+                val h = prefs.lastHost.ifBlank { "127.0.0.1" }
+                val p = if (prefs.lastPort > 0) prefs.lastPort else 8888
+                stopChecklistUpdates()
+                connect(h, p)
+            }
+        reconnectRunnable = r
+        checklistHandler.postDelayed(r, delay)
     }
 
     /**
@@ -223,6 +316,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupUI() {
+        // Restore last successful host:port so a returning user just taps CONNECT.
+        if (prefs.lastHost.isNotBlank()) {
+            binding.hostInput.setText(prefs.lastHost)
+        }
+        binding.portInput.setText(prefs.lastPort.toString())
+
+        // Kick off a one-shot mDNS scan in the background. If the user hasn't
+        // entered a non-loopback host yet (i.e. fresh launch on a Wi-Fi-only
+        // device), prefill the hostInput with the first Mac that announces
+        // _sidescreen._tcp. This is the keyboard-saving entry path for
+        // MatePad Paper which has no on-screen keyboard ergonomics.
+        startMdnsScan()
+
         binding.connectButton.setOnClickListener {
             var host =
                 binding.hostInput.text
@@ -253,11 +359,19 @@ class MainActivity : AppCompatActivity() {
             isConnecting = true
             stopChecklistUpdates()
 
+            // Manual connect cancels any auto-reconnect in flight and clears
+            // the user-disconnected flag so a future stream drop is allowed
+            // to auto-reconnect.
+            userInitiatedDisconnect = false
+            cancelReconnect()
+
             updateStatus("Connecting...")
             connect(host, port)
         }
 
         binding.disconnectButton.setOnClickListener {
+            userInitiatedDisconnect = true
+            cancelReconnect()
             disconnect()
         }
 
@@ -271,6 +385,32 @@ class MainActivity : AppCompatActivity() {
 
         // Initial status
         updateStatus("Ready to connect")
+    }
+
+    /**
+     * Fire a one-shot mDNS discovery for `_sidescreen._tcp`. If a service
+     * resolves and the user hasn't yet typed their own non-loopback host,
+     * prefill the input with the discovered IP. Called once from setupUI;
+     * scan window is 3s, results applied on the main thread.
+     */
+    private fun startMdnsScan() {
+        mdns?.let { return } // scan already in flight
+        val scanner = MdnsDiscovery(applicationContext)
+        mdns = scanner
+        scanner.scan { found ->
+            mdns = null
+            if (found.isEmpty() || isConnected) return@scan
+            val first = found.first()
+            val current = binding.hostInput.text.toString()
+            // Only prefill if the user hasn't entered something specific;
+            // a fresh launch leaves this at the loopback or a stale Wi-Fi IP
+            // we don't want to clobber.
+            if (current.isBlank() || current == "127.0.0.1" || current.equals("localhost", ignoreCase = true)) {
+                binding.hostInput.setText(first.host)
+                binding.portInput.setText(first.port.toString())
+                log("📡 mDNS found ${first.name ?: "Mac"} → ${first.host}:${first.port}")
+            }
+        }
     }
 
     private fun showError(message: String) {
@@ -525,6 +665,8 @@ class MainActivity : AppCompatActivity() {
 
         disconnectButton.setOnClickListener {
             dialog.dismiss()
+            userInitiatedDisconnect = true
+            cancelReconnect()
             disconnect()
         }
 
@@ -716,6 +858,10 @@ class MainActivity : AppCompatActivity() {
             try {
                 log("Connecting to $host:$port...")
 
+                // Track the target so we can persist on success.
+                pendingConnectHost = host
+                pendingConnectPort = port
+
                 streamClient = StreamClient(host, port)
                 streamClient?.onFrameReceived = { frameData, frameSize, timestamp ->
                     val dec = videoDecoder
@@ -767,6 +913,19 @@ class MainActivity : AppCompatActivity() {
                         )
 
                         if (connected) {
+                            // Persist the working endpoint so the next launch
+                            // pre-fills it. upsertPreset skips loopback.
+                            val h = pendingConnectHost
+                            val p = pendingConnectPort
+                            if (h != null && p != null) {
+                                prefs.lastHost = h
+                                prefs.lastPort = p
+                                prefs.upsertPreset(Preset(h, p))
+                            }
+
+                            // Reset auto-reconnect counter on success.
+                            cancelReconnect()
+
                             // Start periodic ping for latency measurement
                             startPingTimer()
 
@@ -797,6 +956,12 @@ class MainActivity : AppCompatActivity() {
                             // Restart checklist updates immediately
                             log("📋 Restarting checklist updates")
                             startChecklistUpdates()
+
+                            // Auto-reconnect on unintended drop (3s/5s/8s
+                            // ladder). scheduleReconnect short-circuits if
+                            // user tapped Disconnect or screen-off path is
+                            // already managing this disconnect.
+                            scheduleReconnect()
                         }
                     }
                 }
@@ -1018,9 +1183,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        super.onDestroy()
+        try {
+            unregisterReceiver(screenStateReceiver)
+        } catch (_: Exception) {
+            // not registered, ignore
+        }
+        cancelReconnect()
         stopChecklistUpdates()
         cleanup()
+        super.onDestroy()
     }
 
     // ==================== Connection Checklist ====================

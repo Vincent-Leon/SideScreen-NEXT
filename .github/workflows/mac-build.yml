@@ -1,0 +1,43 @@
+name: Mac host build
+
+# Mac 端 Swift 构建验证。鸿蒙 / Android 端需要 DevEco SDK / Android SDK，
+# GitHub Actions 上没有现成 image，留作后续 self-hosted runner 或独立 workflow。
+#
+# 安全：本 workflow 不消费任何 GitHub 事件 untrusted input（不读取
+# PR/issue/commit message 等），只对仓库当前 ref 的代码做静态构建验证。
+
+on:
+  push:
+    branches: [main, macos-dev]
+    paths:
+      - 'machost-fork/**'
+      - '.github/workflows/mac-build.yml'
+  pull_request:
+    paths:
+      - 'machost-fork/**'
+      - '.github/workflows/mac-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: Build (release)
+        working-directory: machost-fork
+        run: swift build -c release
+
+      - name: Verify binary
+        working-directory: machost-fork
+        run: |
+          test -x .build/release/SideScreen
+          file .build/release/SideScreen
+          codesign -dv .build/release/SideScreen 2>&1 || echo "(unsigned binary in CI — expected)"

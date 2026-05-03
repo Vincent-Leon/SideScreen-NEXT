@@ -1,10 +1,15 @@
 # SideScreen-NEXT
 
-把华为平板变成 Mac 的低延迟副屏。
+把华为平板（鸿蒙 NEXT、HMOS 2.x、安卓平板）变成 Mac 的低延迟副屏 + 触控板。
 
 USB-C 模式延迟可降至 30 ms 以内，Wi-Fi LAN 模式约 60–80 ms。
 
 派生自 [Side Screen](https://github.com/tranvuongquocdat/SideScreen)（MIT，© Tran Vuong Quoc Dat），适配鸿蒙端，并改写 Mac 侧的连接管线以支持非 ADB 设备 / hdc rport / Bonjour 自动发现。
+
+[![Mac host build](https://github.com/Vincent-Leon/SideScreen-NEXT/actions/workflows/mac-build.yml/badge.svg)](https://github.com/Vincent-Leon/SideScreen-NEXT/actions/workflows/mac-build.yml)
+[![Latest release](https://img.shields.io/github/v/release/Vincent-Leon/SideScreen-NEXT)](https://github.com/Vincent-Leon/SideScreen-NEXT/releases/latest)
+
+> 📦 **下载预编译版本**：[Releases](https://github.com/Vincent-Leon/SideScreen-NEXT/releases) — Mac `.app.zip`、HarmonyOS `.hap`、Android `.apk`
 
 ---
 
@@ -106,11 +111,25 @@ hdc install app/build/outputs/apk/debug/app-debug.apk
    - **已保存预设**（曾经成功连过的 IP）
 3. 列表第一项即"点击 Connect 会用的目标"。Wi-Fi 连着时插入数据线会自动升级到 USB 通道，无需断开重连。
 4. 进入投屏后右下角 ⚙ 打开 Settings：
-   - 状态浮层各列单独开关（NET / FPS / BITRATE / RESOLUTION / RTT / BAT）
-   - 浮层透明度
-   - ⚙ 按钮位置（8 个角点）
-   - 已保存预设管理
-   - About / 断开连接
+   - **状态浮层** — 总开关一键全开/全关，6 项各自细调（NET / FPS / BITRATE / RESOLUTION / RTT / BAT）
+   - **浮层透明度** + ⚙ 按钮位置（8 个角点）
+   - **自动行为** — 仅 USB 模式（禁用 Wi-Fi/mDNS）/ 自动重连（断开后自动恢复 vs 等用户手动）
+   - **已保存预设管理** / About / 断开连接
+
+## 触控
+
+平板上单指点击/长按/拖动 = 鼠标左键；双指上下滑 = 滚动；双指捏合 = 缩放。Mac 端需在系统设置 → 隐私与安全性 → 辅助功能里授予 SideScreen 权限。
+
+## Mac 端 Settings 关键开关
+
+- **Eager Virtual Display**（仅 USB 模式 / 无显示器主机推荐）：点 Start 立刻创建副屏，不等客户端连接 — 适合 MacMini 等无显示器主机，远程登录后副屏即可见。默认关。
+- **Stop on Disconnect**：默认关。客户端断开后保留 listener，下次连上自动恢复（虚拟屏幕销毁/重建是自动的）。
+
+## 自动暂停 / 恢复
+
+- 平板锁屏 → 主动断开 → Mac 销毁虚拟屏幕（保留 listener）→ 解锁后自动重连重建
+- 仅 USB 模式 + 拔 USB → 平板冻结最后一帧 + 「等待 USB」提示 → 插回 USB 自动恢复
+- Mac 端用户主动 Stop（type=0x06 server-shutdown 通知）→ 平板退回 idle 连接页（区别于网络抖动）
 
 ---
 

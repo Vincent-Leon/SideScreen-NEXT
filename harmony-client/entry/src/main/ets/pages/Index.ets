@@ -1278,6 +1278,22 @@ struct Index {
             Text($r('app.string.stats_overlay_hint'))
               .fontSize(11).fontColor(COLOR_SUBTEXT).margin({ bottom: 12 }).width('100%')
 
+            // 总开关：任一项打开 → on；点 off 一键关全部，点 on 一键开全部
+            this.StatToggleRow({
+              label: $r('app.string.stats_master_label'),
+              hint: $r('app.string.stats_master_hint'),
+              isOn: this.hasAnyStat(),
+              onChange: (v: boolean): void => {
+                this.showTransport = v
+                this.showFps = v
+                this.showBitrate = v
+                this.showResolution = v
+                this.showRtt = v
+                this.showBattery = v
+                this.persistUi()
+              },
+            })
+
             this.StatToggleRow({
               label: $r('app.string.stats_net_label'),
               hint: $r('app.string.stats_net_hint'),

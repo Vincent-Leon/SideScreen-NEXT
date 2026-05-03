@@ -52,6 +52,8 @@
 
     { "name": "settings_title", "value": "显示设置" },
     { "name": "stats_overlay_title", "value": "状态浮层" },
+    { "name": "stats_master_label", "value": "显示状态浮层" },
+    { "name": "stats_master_hint", "value": "总开关 — 关闭一次性隐藏所有项目" },
     { "name": "stats_overlay_hint", "value": "可单独开关每一项;全部关闭则隐藏浮层" },
     { "name": "stats_net_label", "value": "NET" },
     { "name": "stats_net_hint", "value": "当前传输方式（USB / mDNS / …）" },

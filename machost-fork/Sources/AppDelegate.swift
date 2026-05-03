@@ -5,6 +5,18 @@ import ApplicationServices
 import os.log
 @preconcurrency import ScreenCaptureKit
 
+// MARK: - i18n helper
+// 简化版 i18n：根据系统语言偏好从两个字面量里选一个。中文系统（语言代码以 "zh" 开头）
+// 用第二个参数，其他用第一个（英文）。Module 内通用，AppDelegate 与 SettingsWindow 共用。
+internal let isZHLocale: Bool = {
+    let lang = Locale.current.language.languageCode?.identifier ?? "en"
+    return lang == "zh"
+}()
+
+internal func L(_ en: String, _ zh: String) -> String {
+    return isZHLocale ? zh : en
+}
+
 // Debug file logger - writes to /tmp/sidescreen.log
 func debugLog(_ message: String) {
     let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
@@ -494,15 +506,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         if isMacOS26 {
-            alert.messageText = "Screen & System Audio Recording Permission Required"
-            alert.informativeText = "Please grant Screen & System Audio Recording permission in System Settings > Privacy & Security."
+            alert.messageText = L("Screen & System Audio Recording Permission Required",
+                                  "需要屏幕和系统音频录制权限")
+            alert.informativeText = L("Please grant Screen & System Audio Recording permission in System Settings > Privacy & Security.",
+                                      "请在 系统设置 > 隐私与安全 中授予屏幕和系统音频录制权限。")
         } else {
-            alert.messageText = "Screen Recording Permission Required"
-            alert.informativeText = "Please grant Screen Recording permission in System Settings > Privacy & Security."
+            alert.messageText = L("Screen Recording Permission Required", "需要屏幕录制权限")
+            alert.informativeText = L("Please grant Screen Recording permission in System Settings > Privacy & Security.",
+                                      "请在 系统设置 > 隐私与安全 中授予屏幕录制权限。")
         }
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Later")
+        alert.addButton(withTitle: L("Open System Settings", "打开系统设置"))
+        alert.addButton(withTitle: L("Later", "稍后"))
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
@@ -592,8 +607,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.state = .stopping
             // Cancel any in-flight stream startup (probe race window)
             self.pendingStartStream?.cancel()
-            // 不在这里 nil pending — 后面的 await pendingStartStream?.value 还要用引用。
-            // forceStopServerSync 末尾会 nil。
         }
 
         // Tell client this is a polite shutdown so it returns to idle (rather than
@@ -641,7 +654,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .listening:
             state = .starting
             pendingStartStream?.cancel()  // defensive
-            pendingStartStream = nil
 
         case .starting:
             // probe 后紧接真实 client，或者并发探测。state 已经是 .starting，无事可做。
@@ -691,7 +703,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Probe disconnected (or stream startup failed during sleep). Cancel the
             // in-flight task; nothing was created yet so tearDown is a no-op.
             pendingStartStream?.cancel()
-            pendingStartStream = nil
             tearDownStreamArtifacts()
             settings.clientConnected = false
             if settings.eagerVirtualDisplay {
@@ -728,13 +739,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Body of the cancellable startStream task. Builds virtualDisplay + capture +
     /// kicks off encoding. On cancellation or failure, leaves the system in a clean
     /// .listening state (or .idle if stopServer cancelled us).
-    ///
-    /// 注意：本函数**不**自己清 pendingStartStream。清空发生在 cancel 点（同步）或
-    /// stopServer/forceStopServerSync。曾经放在 defer 里清空但会 race —— 旧任务的
-    /// defer 异步跑时可能把新一轮 spawn 的 task 引用 clobber 掉，导致 handleClientReady
-    /// 误判 pending==nil 又 spawn 一次。
     @MainActor
     private func startStreamBody() async {
+        defer { pendingStartStream = nil }
+
         // No probe-eat sleep: handleClientReady gates entry on first real client
         // message (rotation/ping). Probes never get here.
         guard !Task.isCancelled, state == .starting else { return }

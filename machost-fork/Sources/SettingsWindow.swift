@@ -96,7 +96,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Side Screen")
                             .font(.system(size: 20, weight: .bold, design: .rounded))
-                        Text("Turn your tablet into a second display")
+                        Text(L("Turn your tablet into a second display", "把平板变成 Mac 的副屏"))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.secondary)
                     }
@@ -113,17 +113,17 @@ struct SettingsView: View {
                             }
                     }
                     .buttonStyle(.plain)
-                    .help("Reset settings")
-                    .alert("Reset Settings", isPresented: $showResetConfirmation) {
-                        Button("Cancel", role: .cancel) { }
-                        Button("Reset", role: .destructive) {
+                    .help(L("Reset settings", "重置设置"))
+                    .alert(L("Reset Settings", "重置设置"), isPresented: $showResetConfirmation) {
+                        Button(L("Cancel", "取消"), role: .cancel) { }
+                        Button(L("Reset", "重置"), role: .destructive) {
                             settings.resetToDefaults()
                             if let window = NSApp.windows.first(where: { $0.title == "Side Screen" }) {
                                 window.center()
                             }
                         }
                     } message: {
-                        Text("This will reset all settings to default values.")
+                        Text(L("This will reset all settings to default values.", "将把所有设置恢复到默认值。"))
                     }
                 }
                 .padding(.horizontal, 20)
@@ -137,16 +137,16 @@ struct SettingsView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         // Display Configuration
-                        FrostedGroupBox(title: "Display Configuration", icon: "display") {
+                        FrostedGroupBox(title: L("Display Configuration", "显示器配置"), icon: "display") {
                             VStack(alignment: .leading, spacing: 16) {
                                 // Resolution
                                 VStack(alignment: .leading, spacing: 8) {
                                     HStack {
-                                        Text("Resolution")
+                                        Text(L("Resolution", "分辨率"))
                                             .font(.system(size: 11))
                                             .foregroundColor(.secondary)
                                         Spacer()
-                                        Toggle("Show all", isOn: $settings.showAllResolutions)
+                                        Toggle(L("Show all", "全部"), isOn: $settings.showAllResolutions)
                                             .toggleStyle(.switch)
                                             .controlSize(.mini)
                                     }
@@ -192,15 +192,15 @@ struct SettingsView: View {
 
                                     if settings.showAllResolutions {
                                         HStack(spacing: 8) {
-                                            TextField("W", value: $settings.customWidth, format: .number)
+                                            TextField(L("W", "宽"), value: $settings.customWidth, format: .number)
                                                 .textFieldStyle(.roundedBorder)
                                                 .frame(width: 70)
-                                            Text("x")
+                                            Text("×")
                                                 .foregroundColor(.secondary)
-                                            TextField("H", value: $settings.customHeight, format: .number)
+                                            TextField(L("H", "高"), value: $settings.customHeight, format: .number)
                                                 .textFieldStyle(.roundedBorder)
                                                 .frame(width: 70)
-                                            Button("Apply") {
+                                            Button(L("Apply", "应用")) {
                                                 settings.applyCustomResolution()
                                             }
                                             .buttonStyle(.bordered)
@@ -212,10 +212,11 @@ struct SettingsView: View {
                                 // HiDPI (Retina)
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("HiDPI (Retina)")
+                                        Text(L("HiDPI (Retina)", "HiDPI（Retina）"))
                                             .font(.system(size: 11))
                                             .foregroundColor(.secondary)
-                                        Text("Renders at 2× resolution for sharper text. Increases bandwidth.")
+                                        Text(L("Renders at 2× resolution for sharper text. Increases bandwidth.",
+                                               "以 2× 像素渲染，文字更清晰，带宽消耗更高。"))
                                             .font(.system(size: 10))
                                             .foregroundColor(.secondary.opacity(0.7))
                                     }
@@ -228,7 +229,7 @@ struct SettingsView: View {
 
                                 // Rotation
                                 VStack(alignment: .leading, spacing: 8) {
-                                    Text("Rotation")
+                                    Text(L("Rotation", "方向"))
                                         .font(.system(size: 11))
                                         .foregroundColor(.secondary)
 
@@ -239,7 +240,9 @@ struct SettingsView: View {
                                                 .frame(width: 80, height: 50)
                                                 .rotationEffect(.degrees(Double(settings.rotation)))
 
-                                            Text(settings.rotation == 90 || settings.rotation == 270 ? "Portrait" : "Landscape")
+                                            Text(settings.rotation == 90 || settings.rotation == 270
+                                                ? L("Portrait", "竖屏")
+                                                : L("Landscape", "横屏"))
                                                 .font(.system(size: 8))
                                                 .foregroundColor(.secondary)
                                         }
@@ -268,7 +271,7 @@ struct SettingsView: View {
                                     }
 
                                     if settings.rotation == 90 || settings.rotation == 270 {
-                                        Text("Display will be in portrait mode")
+                                        Text(L("Display will be in portrait mode", "副屏将以竖屏方向显示"))
                                             .font(.system(size: 10))
                                             .foregroundColor(.accentColor)
                                     }
@@ -277,7 +280,7 @@ struct SettingsView: View {
                                 // Refresh Rate
                                 VStack(alignment: .leading, spacing: 8) {
                                     HStack {
-                                        Text("Refresh Rate")
+                                        Text(L("Refresh Rate", "刷新率"))
                                             .font(.system(size: 11))
                                             .foregroundColor(.secondary)
                                         Spacer()
@@ -294,7 +297,7 @@ struct SettingsView: View {
                                     .pickerStyle(.segmented)
 
                                     if settings.refreshRate >= 90 {
-                                        Text("High refresh rate for smooth experience")
+                                        Text(L("High refresh rate for smooth experience", "高刷新率，画面更流畅"))
                                             .font(.system(size: 10))
                                             .foregroundColor(.green)
                                     }
@@ -303,13 +306,13 @@ struct SettingsView: View {
                         }
 
                         // Touch Control
-                        FrostedGroupBox(title: "Touch Control", icon: "hand.tap") {
+                        FrostedGroupBox(title: L("Touch Control", "触控"), icon: "hand.tap") {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("Enable Touch Input")
+                                        Text(L("Enable Touch Input", "启用触控输入"))
                                             .font(.system(size: 12, weight: .medium))
-                                        Text("Control Mac from tablet touch")
+                                        Text(L("Control Mac from tablet touch", "用平板触控操作 Mac"))
                                             .font(.system(size: 10))
                                             .foregroundColor(.secondary)
                                     }
@@ -319,7 +322,7 @@ struct SettingsView: View {
                                 }
 
                                 if !settings.touchEnabled {
-                                    Text("Touch input is disabled — tablet is display-only")
+                                    Text(L("Touch input is disabled — tablet is display-only", "触控已关闭——平板仅作显示"))
                                         .font(.system(size: 10))
                                         .foregroundColor(.orange)
                                 }
@@ -327,25 +330,25 @@ struct SettingsView: View {
                         }
 
                         // Network Settings
-                        FrostedGroupBox(title: "Network Settings", icon: "network") {
+                        FrostedGroupBox(title: L("Network Settings", "网络设置"), icon: "network") {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack {
-                                    Text("Server Port")
+                                    Text(L("Server Port", "服务端口"))
                                         .font(.system(size: 11))
                                         .foregroundColor(.secondary)
                                     Spacer()
-                                    TextField("Port", value: $settings.port, format: .number)
+                                    TextField(L("Port", "端口"), value: $settings.port, format: .number)
                                         .textFieldStyle(.roundedBorder)
                                         .frame(width: 80)
                                         .disabled(settings.isRunning)
                                 }
 
                                 if settings.isRunning {
-                                    Text("Stop server to change port")
+                                    Text(L("Stop server to change port", "停止服务后才能修改端口"))
                                         .font(.system(size: 10))
                                         .foregroundColor(.orange)
                                 } else if settings.port != 8888 {
-                                    Text("Enter this port in the Android client app")
+                                    Text(L("Enter this port in the client app", "在客户端 App 里使用此端口"))
                                         .font(.system(size: 10))
                                         .foregroundColor(.secondary)
                                 }
@@ -354,9 +357,10 @@ struct SettingsView: View {
 
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("Eager Virtual Display")
+                                        Text(L("Eager Virtual Display", "立即创建副屏"))
                                             .font(.system(size: 12, weight: .medium))
-                                        Text("Create the virtual display on Start instead of waiting for a client. Recommended for headless Macs (MacMini etc.).")
+                                        Text(L("Create the virtual display on Start instead of waiting for a client. Recommended for headless Macs (MacMini etc.).",
+                                               "点 Start 立刻建副屏，无需等客户端连接。适合无显示器的 Mac（如 MacMini）。"))
                                             .font(.system(size: 10))
                                             .foregroundColor(.secondary)
                                             .fixedSize(horizontal: false, vertical: true)
@@ -370,13 +374,13 @@ struct SettingsView: View {
                         }
 
                         // Gaming Boost
-                        FrostedGroupBox(title: "Gaming Boost", icon: settings.gamingBoost ? "bolt.fill" : "bolt") {
+                        FrostedGroupBox(title: L("Gaming Boost", "游戏增强"), icon: settings.gamingBoost ? "bolt.fill" : "bolt") {
                             VStack(alignment: .leading, spacing: 16) {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("Enable Gaming Mode")
+                                        Text(L("Enable Gaming Mode", "启用游戏模式"))
                                             .font(.system(size: 12, weight: .medium))
-                                        Text("Optimized for competitive gaming")
+                                        Text(L("Optimized for competitive gaming", "针对竞技游戏优化"))
                                             .font(.system(size: 10))
                                             .foregroundColor(.secondary)
                                     }
@@ -391,21 +395,21 @@ struct SettingsView: View {
                                             Image(systemName: "checkmark.circle.fill")
                                                 .foregroundColor(.green)
                                                 .font(.system(size: 10))
-                                            Text("High bitrate (1000 Mbps)")
+                                            Text(L("High bitrate (1000 Mbps)", "高码率（1000 Mbps）"))
                                                 .font(.system(size: 11))
                                         }
                                         HStack(spacing: 4) {
                                             Image(systemName: "checkmark.circle.fill")
                                                 .foregroundColor(.green)
                                                 .font(.system(size: 10))
-                                            Text("120 Hz refresh rate")
+                                            Text(L("120 Hz refresh rate", "120 Hz 刷新率"))
                                                 .font(.system(size: 11))
                                         }
                                         HStack(spacing: 4) {
                                             Image(systemName: "checkmark.circle.fill")
                                                 .foregroundColor(.green)
                                                 .font(.system(size: 10))
-                                            Text("Ultra-low latency encoding")
+                                            Text(L("Ultra-low latency encoding", "超低延迟编码"))
                                                 .font(.system(size: 11))
                                         }
                                     }
@@ -416,12 +420,12 @@ struct SettingsView: View {
                         }
 
                         // Streaming Settings
-                        FrostedGroupBox(title: "Streaming Settings", icon: "antenna.radiowaves.left.and.right") {
+                        FrostedGroupBox(title: L("Streaming Settings", "推流设置"), icon: "antenna.radiowaves.left.and.right") {
                             VStack(alignment: .leading, spacing: 16) {
                                 // Bitrate
                                 VStack(alignment: .leading, spacing: 10) {
                                     HStack {
-                                        Text("Bitrate")
+                                        Text(L("Bitrate", "码率"))
                                             .font(.system(size: 11))
                                             .foregroundColor(.secondary)
                                         Spacer()
@@ -466,7 +470,7 @@ struct SettingsView: View {
                                         HStack(spacing: 4) {
                                             Image(systemName: "bolt.fill")
                                                 .font(.system(size: 10))
-                                            Text("Locked at 1000 Mbps in Gaming Boost")
+                                            Text(L("Locked at 1000 Mbps in Gaming Boost", "游戏增强模式下锁定为 1000 Mbps"))
                                                 .font(.system(size: 10))
                                         }
                                         .foregroundColor(.orange)
@@ -475,25 +479,25 @@ struct SettingsView: View {
 
                                 // Quality
                                 VStack(alignment: .leading, spacing: 8) {
-                                    Text("Quality Preset")
+                                    Text(L("Quality Preset", "质量预设"))
                                         .font(.system(size: 11))
                                         .foregroundColor(.secondary)
 
                                     Picker("", selection: $settings.quality) {
-                                        Text("Ultra Low").tag("ultralow")
-                                        Text("Low").tag("low")
-                                        Text("Medium").tag("medium")
-                                        Text("High").tag("high")
+                                        Text(L("Ultra Low", "极低")).tag("ultralow")
+                                        Text(L("Low", "低")).tag("low")
+                                        Text(L("Medium", "中")).tag("medium")
+                                        Text(L("High", "高")).tag("high")
                                     }
                                     .pickerStyle(.segmented)
                                     .disabled(settings.gamingBoost)
 
                                     if settings.gamingBoost {
-                                        Text("Quality locked to Ultra Low in Gaming Boost mode")
+                                        Text(L("Quality locked to Ultra Low in Gaming Boost mode", "游戏增强模式下锁定为「极低」"))
                                             .font(.system(size: 10))
                                             .foregroundColor(.orange)
                                     } else if settings.quality == "ultralow" {
-                                        Text("Fastest encoding, lowest latency")
+                                        Text(L("Fastest encoding, lowest latency", "最快编码，最低延迟"))
                                             .font(.system(size: 10))
                                             .foregroundColor(.green)
                                     }
@@ -502,18 +506,28 @@ struct SettingsView: View {
                         }
 
                         // Status
-                        FrostedGroupBox(title: "Status", icon: "checkmark.circle") {
+                        FrostedGroupBox(title: L("Status", "状态"), icon: "checkmark.circle") {
                             VStack(alignment: .leading, spacing: 12) {
-                                StatusRow(title: "Virtual Display", status: settings.displayCreated ? "Active" : "Inactive", color: settings.displayCreated ? .green : .secondary)
-                                StatusRow(title: "Client Connected", status: settings.clientConnected ? "Yes" : "No", color: settings.clientConnected ? .green : .secondary)
+                                StatusRow(title: L("Virtual Display", "虚拟屏幕"),
+                                          status: settings.displayCreated ? L("Active", "已激活") : L("Inactive", "未激活"),
+                                          color: settings.displayCreated ? .green : .secondary)
+                                StatusRow(title: L("Client Connected", "客户端连接"),
+                                          status: settings.clientConnected ? L("Yes", "是") : L("No", "否"),
+                                          color: settings.clientConnected ? .green : .secondary)
                                 StatusRow(
-                                    title: ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 ? "Screen & System Audio" : "Screen Recording",
-                                    status: settings.hasScreenRecordingPermission ? "Granted" : "Required",
+                                    title: ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26
+                                        ? L("Screen & System Audio", "屏幕和系统音频")
+                                        : L("Screen Recording", "屏幕录制"),
+                                    status: settings.hasScreenRecordingPermission ? L("Granted", "已授权") : L("Required", "需授权"),
                                     color: settings.hasScreenRecordingPermission ? .green : .red
                                 )
-                                StatusRow(title: "Accessibility", status: settings.hasAccessibilityPermission ? "Granted" : "Optional", color: settings.hasAccessibilityPermission ? .green : .orange)
+                                StatusRow(title: L("Accessibility", "辅助功能"),
+                                          status: settings.hasAccessibilityPermission ? L("Granted", "已授权") : L("Optional", "可选"),
+                                          color: settings.hasAccessibilityPermission ? .green : .orange)
                                 if settings.isRunning {
-                                    StatusRow(title: "Capture Method", status: settings.captureMethod, color: settings.captureMethod.contains("fallback") ? .orange : .green)
+                                    StatusRow(title: L("Capture Method", "采集方式"),
+                                              status: settings.captureMethod,
+                                              color: settings.captureMethod.contains("fallback") ? .orange : .green)
                                 }
 
                                 if !settings.hasScreenRecordingPermission {
@@ -521,12 +535,15 @@ struct SettingsView: View {
                                         HStack(spacing: 6) {
                                             Image(systemName: "exclamationmark.triangle.fill")
                                                 .foregroundColor(.orange)
-                                            Text(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 ? "Screen & System Audio Recording Required" : "Screen Recording Required")
+                                            Text(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26
+                                                ? L("Screen & System Audio Recording Required", "需要屏幕和系统音频录制权限")
+                                                : L("Screen Recording Required", "需要屏幕录制权限"))
                                                 .font(.system(size: 12, weight: .medium))
                                         }
                                         Text(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26
-                                            ? "Required to capture the virtual display. Go to System Settings > Privacy & Security > Screen & System Audio Recording."
-                                            : "Required to capture the virtual display.")
+                                            ? L("Required to capture the virtual display. Go to System Settings > Privacy & Security > Screen & System Audio Recording.",
+                                                "用于采集虚拟屏幕。请打开 系统设置 > 隐私与安全 > 屏幕和系统音频录制。")
+                                            : L("Required to capture the virtual display.", "用于采集虚拟屏幕。"))
                                             .font(.system(size: 11))
                                             .foregroundColor(.secondary)
                                         Button(action: {
@@ -534,7 +551,7 @@ struct SettingsView: View {
                                         }) {
                                             HStack {
                                                 Image(systemName: "gear")
-                                                Text("Open System Settings")
+                                                Text(L("Open System Settings", "打开系统设置"))
                                             }
                                         }
                                         .buttonStyle(.borderedProminent)
@@ -550,10 +567,10 @@ struct SettingsView: View {
                                         HStack(spacing: 6) {
                                             Image(systemName: "hand.tap.fill")
                                                 .foregroundColor(.blue)
-                                            Text("Enable Touch Control")
+                                            Text(L("Enable Touch Control", "启用触控"))
                                                 .font(.system(size: 12, weight: .medium))
                                         }
-                                        Text("Control your Mac from your tablet.")
+                                        Text(L("Control your Mac from your tablet.", "通过平板控制 Mac。"))
                                             .font(.system(size: 11))
                                             .foregroundColor(.secondary)
                                         Button(action: {
@@ -561,7 +578,7 @@ struct SettingsView: View {
                                         }) {
                                             HStack {
                                                 Image(systemName: "gear")
-                                                Text("Open Settings")
+                                                Text(L("Open Settings", "打开设置"))
                                             }
                                             .frame(maxWidth: .infinity)
                                         }
@@ -577,7 +594,7 @@ struct SettingsView: View {
 
                         // Performance (when connected)
                         if settings.clientConnected {
-                            FrostedGroupBox(title: "Performance", icon: "speedometer") {
+                            FrostedGroupBox(title: L("Performance", "实时性能"), icon: "speedometer") {
                                 HStack {
                                     VStack(alignment: .leading) {
                                         Text("FPS")
@@ -589,7 +606,7 @@ struct SettingsView: View {
                                     }
                                     Spacer()
                                     VStack(alignment: .leading) {
-                                        Text("Bitrate")
+                                        Text(L("Bitrate", "码率"))
                                             .font(.system(size: 10))
                                             .foregroundColor(.secondary)
                                         Text(String(format: "%.1f Mbps", settings.currentBitrate))
@@ -618,7 +635,7 @@ struct SettingsView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: settings.isRunning ? "stop.fill" : "play.fill")
                                     .font(.system(size: 12))
-                                Text(settings.isRunning ? "Stop" : "Start")
+                                Text(settings.isRunning ? L("Stop", "停止") : L("Start", "启动"))
                                     .font(.system(size: 13, weight: .medium))
                             }
                             .frame(width: 90)
@@ -638,7 +655,7 @@ struct SettingsView: View {
                                             .stroke(Color.green.opacity(0.3), lineWidth: 2)
                                             .scaleEffect(1.5)
                                     }
-                                Text("Running on port \(settings.port)")
+                                Text(L("Running on port \(settings.port)", "运行在端口 \(settings.port)"))
                                     .font(.system(size: 12))
                             }
                             .padding(.horizontal, 12)
@@ -670,7 +687,7 @@ struct SettingsView: View {
                                 }
                         }
                         .buttonStyle(.plain)
-                        .help("Restart App")
+                        .help(L("Restart App", "重启应用"))
 
                         // Quit button
                         Button(action: {
@@ -948,22 +965,22 @@ class DisplaySettings: ObservableObject {
     }
 
     static let resolutionGroups: [ResolutionGroup] = [
-        ResolutionGroup(name: "16:10", ratio: "Widescreen", resolutions: [
+        ResolutionGroup(name: "16:10", ratio: L("Widescreen", "宽屏"), resolutions: [
             "1280x800", "1440x900", "1680x1050", "1920x1200", "2560x1600"
         ]),
-        ResolutionGroup(name: "16:9", ratio: "HD/4K", resolutions: [
+        ResolutionGroup(name: "16:9", ratio: L("HD/4K", "高清/4K"), resolutions: [
             "1280x720", "1366x768", "1600x900", "1920x1080", "2560x1440", "3840x2160"
         ]),
-        ResolutionGroup(name: "4:3", ratio: "Classic", resolutions: [
+        ResolutionGroup(name: "4:3", ratio: L("Classic", "经典"), resolutions: [
             "1024x768", "1280x960", "1600x1200"
         ]),
-        ResolutionGroup(name: "3:2", ratio: "Surface/Pixel", resolutions: [
+        ResolutionGroup(name: "3:2", ratio: L("Surface/Pixel", "Surface/Pixel"), resolutions: [
             "1920x1280", "2160x1440", "2736x1824"
         ]),
-        ResolutionGroup(name: "5:3", ratio: "Tablet Wide", resolutions: [
+        ResolutionGroup(name: "5:3", ratio: L("Tablet Wide", "宽屏平板"), resolutions: [
             "2000x1200", "2560x1536", "2800x1680"
         ]),
-        ResolutionGroup(name: "4:3", ratio: "iPad", resolutions: [
+        ResolutionGroup(name: "4:3", ratio: L("iPad", "iPad"), resolutions: [
             "2048x1536", "2224x1668", "2388x1668", "2732x2048"
         ])
     ]

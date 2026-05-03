@@ -53,6 +53,8 @@
     { "name": "settings_title", "value": "Display Settings" },
     { "name": "stats_overlay_title", "value": "Stats Overlay" },
     { "name": "stats_overlay_hint", "value": "Toggle each item; turn all off to hide overlay" },
+    { "name": "stats_master_label", "value": "Show Stats Overlay" },
+    { "name": "stats_master_hint", "value": "Master switch — flip off to hide all items at once" },
     { "name": "stats_net_label", "value": "NET" },
     { "name": "stats_net_hint", "value": "Current transport (USB / mDNS / …)" },
     { "name": "stats_fps_label", "value": "FPS" },

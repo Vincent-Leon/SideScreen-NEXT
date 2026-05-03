@@ -592,6 +592,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.state = .stopping
             // Cancel any in-flight stream startup (probe race window)
             self.pendingStartStream?.cancel()
+            // 不在这里 nil pending — 后面的 await pendingStartStream?.value 还要用引用。
+            // forceStopServerSync 末尾会 nil。
         }
 
         // Tell client this is a polite shutdown so it returns to idle (rather than
@@ -639,6 +641,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .listening:
             state = .starting
             pendingStartStream?.cancel()  // defensive
+            pendingStartStream = nil
 
         case .starting:
             // probe 后紧接真实 client，或者并发探测。state 已经是 .starting，无事可做。
@@ -688,6 +691,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Probe disconnected (or stream startup failed during sleep). Cancel the
             // in-flight task; nothing was created yet so tearDown is a no-op.
             pendingStartStream?.cancel()
+            pendingStartStream = nil
             tearDownStreamArtifacts()
             settings.clientConnected = false
             if settings.eagerVirtualDisplay {
@@ -724,10 +728,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Body of the cancellable startStream task. Builds virtualDisplay + capture +
     /// kicks off encoding. On cancellation or failure, leaves the system in a clean
     /// .listening state (or .idle if stopServer cancelled us).
+    ///
+    /// 注意：本函数**不**自己清 pendingStartStream。清空发生在 cancel 点（同步）或
+    /// stopServer/forceStopServerSync。曾经放在 defer 里清空但会 race —— 旧任务的
+    /// defer 异步跑时可能把新一轮 spawn 的 task 引用 clobber 掉，导致 handleClientReady
+    /// 误判 pending==nil 又 spawn 一次。
     @MainActor
     private func startStreamBody() async {
-        defer { pendingStartStream = nil }
-
         // No probe-eat sleep: handleClientReady gates entry on first real client
         // message (rotation/ping). Probes never get here.
         guard !Task.isCancelled, state == .starting else { return }

@@ -71,8 +71,15 @@ struct GestureThresholds {
     static let doubleTapMaxDistance: CGFloat = 20
     static let longPressTime: UInt64 = 500_000_000     // 500ms
     static let scrollSensitivity: CGFloat = 1.2
-    static let pinchMinDistance: CGFloat = 20
+    /// Minimum total movement (either axis) before a 2-finger gesture is classified.
+    /// Higher = harder to trigger but resists touchscreen jitter.
+    static let twoFingerActivateDistance: CGFloat = 25
+    /// One axis must be ≥ ratio × the other to win classification; else stay ambiguous.
+    static let twoFingerAxisRatio: CGFloat = 1.4
     static let minTouchInterval: UInt64 = 8_000_000    // ~120Hz
+    /// Hold time before a pointerCount change (1↔2) is committed. Filters out
+    /// touchscreen spurious second-pointer blips during a 1-finger drag.
+    static let pointerCountHoldNs: UInt64 = 60_000_000  // 60ms
 }
 
 @available(macOS 14.0, *)
@@ -947,6 +954,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // 2-finger tracking
     private var initialPinchDistance: CGFloat = 0
     private var lastPinchDistance: CGFloat = 0
+    /// Midpoint at the start of the 2-finger gesture (Down event); used to measure
+    /// total midpoint travel for scroll-vs-pinch classification.
+    private var twoFingerStartMidpoint: CGPoint = .zero
+    /// Last seen pointer count from incoming touch packets — used to apply
+    /// hysteresis when a touch screen reports a brief spurious second pointer
+    /// during a one-finger move (would otherwise flip to two-finger gesture).
+    private var lastPointerCount: Int = 0
+    /// Time at which we first saw pointerCount transition; the new mode is only
+    /// applied after the count has been stable for `pointerCountHoldNs`.
+    private var pointerCountChangeTimeNs: UInt64 = 0
+    /// Effective pointer count after hysteresis filtering.
+    private var effectivePointerCount: Int = 0
 
     // Momentum scrolling
     private var momentumTimer: Timer?
@@ -982,7 +1001,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             y: bounds.origin.y + CGFloat(y2) * bounds.height
         )
 
-        if pointerCount >= 2 {
+        // Apply pointer-count hysteresis: a touchscreen sometimes reports a brief
+        // spurious second pointer during a 1-finger drag. We only commit the
+        // pointerCount change after it has held steady for `pointerCountHoldNs`.
+        // For Down/Up actions we trust the count immediately (those are user-driven
+        // discrete events); only Move events are filtered.
+        let nowNs = DispatchTime.now().uptimeNanoseconds
+        let raw = max(1, min(2, pointerCount))
+        if action == 0 || action == 2 {
+            // Down / Up: snap immediately.
+            effectivePointerCount = raw
+            lastPointerCount = raw
+            pointerCountChangeTimeNs = nowNs
+        } else {
+            // Move: filter blips.
+            if raw != lastPointerCount {
+                pointerCountChangeTimeNs = nowNs
+                lastPointerCount = raw
+            }
+            if raw != effectivePointerCount &&
+               nowNs - pointerCountChangeTimeNs >= GestureThresholds.pointerCountHoldNs {
+                effectivePointerCount = raw
+            }
+        }
+
+        if effectivePointerCount >= 2 {
             handleTwoFingerTouch(p1: p1, p2: p2, action: action)
         } else {
             handleOneFingerTouch(at: p1, action: action)
@@ -1141,18 +1184,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             gestureState = .idle  // Reset so 2-finger detection starts fresh
             initialPinchDistance = distance
             lastPinchDistance = distance
+            twoFingerStartMidpoint = midpoint
             touchLastPosition = midpoint
 
         case 1: // Move
-            let distanceChange = abs(distance - initialPinchDistance)
-            let midDelta = hypot(midpoint.x - touchLastPosition.x, midpoint.y - touchLastPosition.y)
+            // Cumulative metrics from gesture start — far more stable than
+            // per-frame deltas for classification. Touchscreen jitter on a single
+            // axis can push per-frame deltas wildly; cumulative values average it.
+            let totalDistanceChange = abs(distance - initialPinchDistance)
+            let totalMidDelta = hypot(midpoint.x - twoFingerStartMidpoint.x,
+                                      midpoint.y - twoFingerStartMidpoint.y)
 
-            // Determine mode if not yet decided
+            // Classify only once the gesture has clearly committed to one axis.
+            // Both axes must clear an absolute threshold AND one must dominate
+            // the other by `twoFingerAxisRatio`. While ambiguous, do nothing —
+            // user just hasn't moved enough yet to know intent.
             if gestureState != .twoFingerScroll && gestureState != .pinching {
-                if distanceChange > GestureThresholds.pinchMinDistance {
-                    gestureState = .pinching
-                } else if midDelta > GestureThresholds.tapMaxDistance {
+                let activate = GestureThresholds.twoFingerActivateDistance
+                let ratio = GestureThresholds.twoFingerAxisRatio
+                if totalMidDelta > activate &&
+                   totalMidDelta > totalDistanceChange * ratio {
                     gestureState = .twoFingerScroll
+                } else if totalDistanceChange > activate &&
+                          totalDistanceChange > totalMidDelta * ratio {
+                    gestureState = .pinching
                 }
             }
 
@@ -1163,9 +1218,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 injectScrollEvent(deltaX: dx, deltaY: dy, at: midpoint)
 
             case .pinching:
+                // Direction: fingers spreading (distance ↑) → zoom in;
+                // fingers pinching together → zoom out. With macOS natural
+                // scrolling on (default), Cmd + wheel↑ = zoom OUT, so we send
+                // the negative of the raw distance delta to match user
+                // expectation ("spread = bigger").
                 let scaleDelta = distance - lastPinchDistance
-                // Cmd + scroll = zoom in most Mac apps
-                let zoomAmount = Int32(scaleDelta * 0.5)
+                let zoomAmount = -Int32(scaleDelta * 0.5)
                 if zoomAmount != 0 {
                     injectZoomEvent(delta: zoomAmount, at: midpoint)
                 }

@@ -16,8 +16,10 @@ import {
   ProtocolParser,
   ProtocolHandler,
   DisplayConfig,
+  TouchPoint,
   encodePing,
   encodeClientRotation,
+  encodeTouch,
 } from './Protocol'
 
 const TAG: string = '[StreamClient]'
@@ -65,6 +67,18 @@ export class StreamClient {
     const sendOpts: socket.TCPSendOptions = { data: packet.buffer }
     this.tcp.send(sendOpts).catch((err: BusinessError): void => {
       console.error(TAG, `sendRotation: code=${err.code} msg=${err.message}`)
+    })
+  }
+
+  /** 触控事件：归一化坐标 (0..1)，最多 2 指，action = DOWN/MOVE/UP。
+   *  fire-and-forget — send 失败只记 log 不影响 UI（手指仍在划，下一帧又会发）。 */
+  sendTouch(pointers: TouchPoint[], action: number): void {
+    if (!this.connected || this.tcp == null) return
+    if (pointers.length === 0) return
+    const packet = encodeTouch(pointers, action)
+    const sendOpts: socket.TCPSendOptions = { data: packet.buffer }
+    this.tcp.send(sendOpts).catch((err: BusinessError): void => {
+      console.warn(TAG, `sendTouch: code=${err.code} msg=${err.message}`)
     })
   }
 

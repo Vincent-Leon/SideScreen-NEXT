@@ -15,6 +15,7 @@ import { display, promptAction } from '@kit.ArkUI'
 import { socket } from '@kit.NetworkKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { StreamClient, StreamClientCallbacks, REASON_SERVER_SHUTDOWN } from '../net/StreamClient'
+import { TouchPoint, TOUCH_ACTION_DOWN, TOUCH_ACTION_MOVE, TOUCH_ACTION_UP } from '../net/Protocol'
 import { Prefs, SavedConnection, SavedUiPrefs, Preset } from '../util/Prefs'
 import { discoverSideScreen, DiscoveredService } from '../util/MdnsDiscovery'
 import { I18n } from '../util/I18n'
@@ -111,6 +112,12 @@ struct Index {
   @State lastError: string = ''
   @State surfaceLoaded: boolean = false
   @State decoderRunning: boolean = false
+  /** XComponent 当前 vp 尺寸，用于触控归一化。onAreaChange 写入；
+   *  Touch 坐标 / surface 尺寸 = 0..1 比值（与 Mac 端 CGDisplayBounds 反算配对）。 */
+  private surfaceWidthVp: number = 0
+  private surfaceHeightVp: number = 0
+  /** 触控节流：MOVE 频率限制，避免 ArkTS 主线程被超高频 send 淹没 */
+  private lastTouchSendMs: number = 0
 
   // ---- 电量 ----
   @State batteryLevel: number = -1
@@ -979,6 +986,58 @@ struct Index {
   }
 
   // ============================================================================
+  // 触控（Touch → Mac type=0x02）
+  // ============================================================================
+
+  /** 把 ArkUI 的 TouchEvent 转成协议消息发给 Mac。
+   *  - 坐标归一化为 0..1（touch.x / surface_width_vp）；Mac 端用 CGDisplayBounds 反算
+   *    到副屏物理坐标后注入鼠标/手势事件
+   *  - 最多 2 指（协议限制），超过截断
+   *  - action: Down/Move/Up = 0/1/2；Cancel 当 Up 处理
+   *  - MOVE 节流到 ~120Hz（≥8ms），避免 ArkTS 主线程被淹
+   *  - 多指变化（Down/Up 来第二指）：协议没有"pointer down/up"区分，全部映射到 DOWN/UP
+   *    （Mac 端的手势状态机靠 pointerCount 自己识别多指起止） */
+  private handleTouch(event: TouchEvent): void {
+    if (this.client == null) return
+    if (this.surfaceWidthVp <= 0 || this.surfaceHeightVp <= 0) return
+
+    const touches = event.touches
+    if (touches.length === 0) return
+    const count = Math.min(touches.length, 2)
+
+    const points: TouchPoint[] = []
+    for (let i = 0; i < count; i++) {
+      const t = touches[i]
+      points.push({
+        x: t.x / this.surfaceWidthVp,
+        y: t.y / this.surfaceHeightVp,
+      } as TouchPoint)
+    }
+
+    let action: number
+    switch (event.type) {
+      case TouchType.Down:
+        action = TOUCH_ACTION_DOWN
+        break
+      case TouchType.Move:
+        action = TOUCH_ACTION_MOVE
+        // 节流：MOVE 间隔 < 8ms 时丢弃（Down/Up 不节流）
+        const now = Date.now()
+        if (now - this.lastTouchSendMs < 8) return
+        this.lastTouchSendMs = now
+        break
+      case TouchType.Up:
+      case TouchType.Cancel:
+        action = TOUCH_ACTION_UP
+        break
+      default:
+        return
+    }
+
+    this.client.sendTouch(points, action)
+  }
+
+  // ============================================================================
   // UI sub-builders
   // ============================================================================
 
@@ -1582,6 +1641,16 @@ struct Index {
               nativeStop()
               this.decoderRunning = false
             }
+          })
+          .onAreaChange((_old: Area, newArea: Area): void => {
+            // 缓存 XComponent 当前尺寸用于触控坐标归一化（onTouch 用 vp 单位）
+            this.surfaceWidthVp = Number(newArea.width)
+            this.surfaceHeightVp = Number(newArea.height)
+          })
+          .onTouch((event: TouchEvent): void => {
+            // paused 态不发触控（socket 可能已断；也避免冻结画面里乱点）
+            if (this.paused) return
+            this.handleTouch(event)
           })
 
         // 暂停 overlay（仅 paused 态显示，覆盖在最后一帧之上）

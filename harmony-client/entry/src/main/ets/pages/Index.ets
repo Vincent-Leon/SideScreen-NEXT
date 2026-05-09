@@ -16,6 +16,7 @@ import { socket } from '@kit.NetworkKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { StreamClient, StreamClientCallbacks, REASON_SERVER_SHUTDOWN } from '../net/StreamClient'
 import { TouchPoint, TOUCH_ACTION_DOWN, TOUCH_ACTION_MOVE, TOUCH_ACTION_UP } from '../net/Protocol'
+import { LicenseManager, ProProductInfo, PurchaseResultKind } from '../util/LicenseManager'
 import { Prefs, SavedConnection, SavedUiPrefs, Preset } from '../util/Prefs'
 import { discoverSideScreen, DiscoveredService } from '../util/MdnsDiscovery'
 import { I18n } from '../util/I18n'
@@ -143,8 +144,21 @@ struct Index {
   @State settingsBtnPos: number = 0     // 0=BR / 1=BL / 2=TR / 3=TL / 4=TC / 5=BC / 6=CL / 7=CR
   /** 仅 USB 模式：跳过 mDNS / saved presets，只走 127.0.0.1 USB 隧道。 */
   @State wifiDisabled: boolean = false
-  /** 自动重连：断开后自动恢复（USB-only = USB probe 循环；Wi-Fi = ladder）。 */
+  /** 自动重连：断开后自动恢复（USB-only = USB probe 循环；Wi-Fi = ladder）。Pro。 */
   @State autoReconnect: boolean = true
+  /** 自动旋转：根据平板物理方向自动通知 Mac 重建虚拟显示器。Pro。 */
+  @State autoRotation: boolean = true
+
+  // ---- Pro 权益 ----
+  @State isPro: boolean = false
+  /** Pro 升级 modal 显隐 */
+  @State showProModal: boolean = false
+  /** Pro 商品信息（价格 / 名称），从 AGC queryProducts 拿；拉取中或失败时显示占位 */
+  @State proProductPrice: string = ''
+  /** 购买进行中（按钮 loading 状态） */
+  @State proPurchaseInFlight: boolean = false
+  /** 购买结果提示文本（短暂显示在 modal 底部） */
+  @State proStatusHint: string = ''
 
   // ---- 暂停态（连接断了但保留画面，等待自动 / 手动恢复）----
   /** true 时 XComponent 留着上一帧画面，叠加暂停 overlay。userInitiatedDisconnect 不进入此态。 */
@@ -212,6 +226,7 @@ struct Index {
         this.settingsBtnPos = ui.settingsBtnPos
         this.wifiDisabled = ui.wifiDisabled
         this.autoReconnect = ui.autoReconnect
+        this.autoRotation = ui.autoRotation
         return Prefs.loadPresets()
       })
       .then((list: Preset[]): void => {
@@ -223,6 +238,24 @@ struct Index {
         console.warn(TAG, `prefs init/load failed: ${e.message}`)
         this.startProbeTimer()
       })
+
+    // Pro 权益：先用本地缓存初始化（即时刷 UI），再异步从 AGC 同步
+    Prefs.getProCached()
+      .then((cached: boolean): void => {
+        LicenseManager.initFromCache(cached)
+        this.isPro = cached
+      })
+      .then((): Promise<boolean> => LicenseManager.syncFromAGC(ctx))
+      .then((owned: boolean): void => {
+        this.isPro = owned
+        console.info(TAG, `pro entitlement: ${owned}`)
+      })
+      .catch((e: Error): void => console.warn(TAG, `pro init: ${e.message}`))
+
+    // 监听 Pro 状态变化（购买成功 / 恢复购买后）
+    LicenseManager.onChange((isPro: boolean): void => {
+      this.isPro = isPro
+    })
 
     this.refreshBattery()
     this.batteryTimer = setInterval((): void => {
@@ -336,6 +369,7 @@ struct Index {
 
   private handleRotationChange(): void {
     if (!this.connected || this.client == null) return
+    if (!this.effectiveAutoRotation()) return  // Pro feature
     const deg = this.currentRotationDegrees()
     if (deg === this.lastSentRotationDeg) return
     console.info(TAG, `device rotated → sending ${deg}° (${deg === 0 ? 'landscape' : 'portrait'})`)
@@ -377,8 +411,9 @@ struct Index {
         found.push({ host: '127.0.0.1', port: 8888, label: 'USB', serviceName: '' })
       }
 
-      // 仅 USB 模式：跳过 mDNS + saved presets
-      if (!this.wifiDisabled) {
+      // 自动发现 Pro：仅 USB-loopback 探测对所有用户开放；mDNS 扫描和已保存预设
+      // 探测是 Pro 特性。免费用户用手动 Host:Port 输入连其他设备。
+      if (this.effectiveAutoDiscovery()) {
         // 2) mDNS 扫描(3s)
         try {
           const ctx = getContext(this) as common.UIAbilityContext
@@ -491,12 +526,17 @@ struct Index {
             .then((updated: Preset[]): void => { this.presets = updated })
             .catch((e: Error): void => console.warn(TAG, `upsertPreset: ${e.message}`))
         }
-        const deg = this.currentRotationDegrees()
-        this.lastSentRotationDeg = deg
-        if (this.client != null) {
-          this.client.sendRotation(deg)
+        // 自动旋转 Pro：连上时主动报当前方向。免费用户不发，依靠 Mac 端 Settings
+        // 里的 rotation picker 手动设。
+        if (this.effectiveAutoRotation()) {
+          const deg = this.currentRotationDegrees()
+          this.lastSentRotationDeg = deg
+          if (this.client != null) {
+            this.client.sendRotation(deg)
+          }
         }
-        // 非 USB 时启动 USB 上线监视器,插数据线时自动升级到有线
+        // 非 USB 时启动 USB 上线监视器,插数据线时自动升级到有线（Pro 才有 mDNS 路径，
+        // 也只有 Pro 用户会出现 currentTransport !== 'USB' 的情况）
         if (this.currentTransport !== 'USB') {
           this.startUsbWatch()
         } else {
@@ -578,8 +618,8 @@ struct Index {
     // 1) USB（hdc rport tunnel 时本地回环最快）
     candidates.push({ host: '127.0.0.1', port: 8888, label: 'USB' })
 
-    // 仅 USB 模式：不扫 mDNS / saved presets / manual host，候选只有 USB
-    if (!this.wifiDisabled) {
+    // 自动发现 Pro：mDNS 扫描和 saved presets 只对 Pro 用户启用
+    if (this.effectiveAutoDiscovery()) {
       // 2) mDNS scan（3 秒）
       this.status = I18n.s($r('app.string.status_scanning'))
       try {
@@ -603,14 +643,15 @@ struct Index {
           candidates.push({ host: p.host, port: p.port, label: 'Saved' })
         }
       }
+    }
 
-      // 4) 手动输入的 host（advanced settings 里）
-      if (this.host.length > 0 && this.host !== '127.0.0.1' && this.host !== 'localhost') {
-        const dup = candidates.some((c: ConnectCandidate): boolean =>
-          c.host === this.host && c.port === this.port)
-        if (!dup) {
-          candidates.push({ host: this.host, port: this.port, label: 'Manual' })
-        }
+    // 4) 手动输入的 host（advanced settings 里）— 所有用户都可用，
+    // 是免费用户连 Wi-Fi 设备的唯一路径
+    if (this.host.length > 0 && this.host !== '127.0.0.1' && this.host !== 'localhost') {
+      const dup = candidates.some((c: ConnectCandidate): boolean =>
+        c.host === this.host && c.port === this.port)
+      if (!dup) {
+        candidates.push({ host: this.host, port: this.port, label: 'Manual' })
       }
     }
 
@@ -837,8 +878,9 @@ struct Index {
       return
     }
 
-    // 被动断开：根据 autoReconnect / wifiDisabled 决定后续
-    if (!this.autoReconnect) {
+    // 被动断开：根据 effectiveAutoReconnect / effectiveAutoDiscovery 决定后续。
+    // 免费用户 effectiveAutoReconnect = false，强制走 manual-wait（画面冻结，等用户主动连）。
+    if (!this.effectiveAutoReconnect()) {
       // 自动重连关：保留画面冻结，进 manual-wait 暂停态
       this.paused = true
       this.pausedHintKind = 'manual'
@@ -848,6 +890,7 @@ struct Index {
       return
     }
 
+    // 以下路径都是 Pro：免费用户在上一个 if 已 return
     if (this.wifiDisabled) {
       // 仅 USB + 自动重连：进 usb-wait 暂停态，启 1Hz USB probe
       this.paused = true
@@ -963,12 +1006,91 @@ struct Index {
       settingsBtnPos: this.settingsBtnPos,
       wifiDisabled: this.wifiDisabled,
       autoReconnect: this.autoReconnect,
+      autoRotation: this.autoRotation,
     } as SavedUiPrefs).catch((e: Error): void => console.warn(TAG, `saveUi: ${e.message}`))
   }
 
   private hasAnyStat(): boolean {
     return this.showTransport || this.showFps || this.showBitrate ||
            this.showResolution || this.showRtt || this.showBattery
+  }
+
+  // ============================================================================
+  // Pro feature 实际生效值 — Pref 是用户偏好，但 Pro 锁未解时强制 false
+  // ============================================================================
+
+  /** 打开 Pro upgrade modal — 顺手拉一次商品价格（用户没在 settings 顶部见过 banner 时） */
+  private openProModal(): void {
+    this.proStatusHint = ''
+    this.showProModal = true
+    if (this.proProductPrice.length === 0) {
+      const ctx = getContext(this) as common.UIAbilityContext
+      LicenseManager.queryProductInfo(ctx).then((info: ProProductInfo | null): void => {
+        if (info != null) this.proProductPrice = info.price
+      }).catch((_: Error): void => { /* 失败时按钮显示 "..." */ })
+    }
+  }
+
+  /** 启动 Pro 购买流程 */
+  private startProPurchase(): void {
+    if (this.proPurchaseInFlight) return
+    this.proPurchaseInFlight = true
+    this.proStatusHint = ''
+    const ctx = getContext(this) as common.UIAbilityContext
+    LicenseManager.startPurchase(ctx).then((res): void => {
+      this.proPurchaseInFlight = false
+      if (res.kind === PurchaseResultKind.Success) {
+        this.showProModal = false
+        promptAction.showToast({ message: I18n.s($r('app.string.pro_purchase_success')), duration: 2000 })
+      } else if (res.kind === PurchaseResultKind.AlreadyOwned) {
+        this.showProModal = false
+        promptAction.showToast({ message: I18n.s($r('app.string.pro_already_owned')), duration: 2000 })
+        // already owned 但 cachedPro 未更新 → 主动同步
+        LicenseManager.syncFromAGC(ctx).catch((_: Error): void => { /* ignore */ })
+      } else if (res.kind === PurchaseResultKind.UserCanceled) {
+        // 用户主动取消，无需提示
+      } else if (res.kind === PurchaseResultKind.NotLoggedIn) {
+        this.proStatusHint = I18n.s($r('app.string.pro_err_not_logged_in'))
+      } else if (res.kind === PurchaseResultKind.NetworkError) {
+        this.proStatusHint = I18n.s($r('app.string.pro_err_network'))
+      } else {
+        this.proStatusHint = I18n.s($r('app.string.pro_err_generic'), res.message)
+      }
+    }).catch((e: Error): void => {
+      this.proPurchaseInFlight = false
+      this.proStatusHint = I18n.s($r('app.string.pro_err_generic'), e.message)
+    })
+  }
+
+  /** 恢复购买（已付费用户换设备 / 重装） */
+  private restoreProPurchase(): void {
+    const ctx = getContext(this) as common.UIAbilityContext
+    LicenseManager.syncFromAGC(ctx).then((owned: boolean): void => {
+      if (owned) {
+        this.showProModal = false
+        promptAction.showToast({ message: I18n.s($r('app.string.pro_restored')), duration: 2000 })
+      } else {
+        this.proStatusHint = I18n.s($r('app.string.pro_no_purchase_found'))
+      }
+    }).catch((e: Error): void => {
+      this.proStatusHint = I18n.s($r('app.string.pro_err_generic'), e.message)
+    })
+  }
+
+  /** 自动重连实际是否启用（持久化偏好 AND Pro 已解锁） */
+  private effectiveAutoReconnect(): boolean {
+    return this.isPro && this.autoReconnect
+  }
+
+  /** 自动旋转实际是否启用 */
+  private effectiveAutoRotation(): boolean {
+    return this.isPro && this.autoRotation
+  }
+
+  /** 自动发现实际是否启用（mDNS / saved presets / 手动 host）—— 免费用户仅 USB loopback */
+  private effectiveAutoDiscovery(): boolean {
+    // Pro 用户尊重 wifiDisabled toggle；免费用户强制 USB-only 行为
+    return this.isPro && !this.wifiDisabled
   }
 
   private posToAlignment(): Alignment {
@@ -1075,6 +1197,144 @@ struct Index {
         .onChange((on: boolean): void => { $$.onChange(on) })
     }
     .width('100%').padding({ top: 6, bottom: 6 }).alignItems(VerticalAlign.Center)
+  }
+
+  /** Pro-gated toggle — Pro 用户行为同 StatToggleRow；免费用户：toggle 灰显 / 整行点击弹 Pro modal。
+   *  isOn 在免费态强制显示为 false（与 effective* 计算一致），即便 prefs 里有真值。 */
+  @Builder
+  ProToggleRow($$: StatToggleParams) {
+    Row() {
+      Column() {
+        Row() {
+          Text($$.label).fontSize(14).fontWeight(FontWeight.Bold)
+            .fontColor(this.isPro ? COLOR_TEXT : COLOR_DIM)
+          if (!this.isPro) {
+            Text(' 🔒 PRO').fontSize(10).fontColor(COLOR_PRIMARY).margin({ left: 6 })
+          }
+        }
+        Text($$.hint).fontSize(11).fontColor(COLOR_SUBTEXT).margin({ top: 2 })
+      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+      Toggle({ type: ToggleType.Switch, isOn: this.isPro && $$.isOn })
+        .enabled(this.isPro)
+        .onChange((on: boolean): void => {
+          if (!this.isPro) return
+          $$.onChange(on)
+        })
+    }
+    .width('100%').padding({ top: 6, bottom: 6 }).alignItems(VerticalAlign.Center)
+    .onClick((): void => {
+      if (!this.isPro) {
+        this.openProModal()
+      }
+    })
+  }
+
+  /** Pro 状态 banner — 显示在 settings 顶部 / "自动行为" 分组开头
+   *  - 未购买：金色高亮 + "升级 Pro" 按钮 + 价格（如已加载）
+   *  - 已购买：绿色 ✓ + 小字 "恢复购买" 链接（处理多设备 / 重装）  */
+  @Builder
+  ProBanner() {
+    if (this.isPro) {
+      Row() {
+        Text('✓').fontSize(16).fontColor(COLOR_OK).margin({ right: 8 })
+        Text($r('app.string.pro_active')).fontSize(13).fontWeight(FontWeight.Medium).fontColor(COLOR_TEXT).layoutWeight(1)
+        Text($r('app.string.pro_restore')).fontSize(11).fontColor(COLOR_HINT)
+          .onClick((): void => { this.restoreProPurchase() })
+      }
+      .width('100%').padding(12).backgroundColor('#1A4CAF50').borderRadius(8)
+    } else {
+      Column({ space: 8 }) {
+        Row() {
+          Text('🔓').fontSize(18).margin({ right: 8 })
+          Column() {
+            Text($r('app.string.pro_title')).fontSize(15).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
+            Text($r('app.string.pro_subtitle')).fontSize(11).fontColor(COLOR_SUBTEXT).margin({ top: 2 })
+          }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+        }.width('100%')
+
+        Row() {
+          Button(I18n.s($r('app.string.pro_upgrade_button'),
+            this.proProductPrice.length > 0 ? this.proProductPrice : '...'))
+            .fontSize(13).fontColor(COLOR_TEXT).backgroundColor(COLOR_PRIMARY)
+            .borderRadius(8).padding({ left: 16, right: 16, top: 8, bottom: 8 })
+            .onClick((): void => { this.openProModal() })
+            .layoutWeight(1)
+        }.width('100%')
+      }
+      .padding(12).backgroundColor('#1A007AFF').borderRadius(8).width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+  }
+
+  /** Pro 升级 modal —— 列出 3 个 Pro 特性 + 价格 + 立即购买 + 恢复购买 + 关闭 */
+  @Builder
+  ProUpgradeModal() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column().width('100%').height('100%').backgroundColor('#A0000000')
+        .onClick((): void => {
+          if (!this.proPurchaseInFlight) this.showProModal = false
+        })
+
+      Column({ space: 14 }) {
+        Text('🔓').fontSize(40)
+        Text($r('app.string.pro_modal_title')).fontSize(22).fontWeight(FontWeight.Bold).fontColor(COLOR_TEXT)
+        Text($r('app.string.pro_modal_subtitle')).fontSize(13).fontColor(COLOR_SUBTEXT)
+          .textAlign(TextAlign.Center)
+
+        Column({ space: 10 }) {
+          this.ProFeatureRow($r('app.string.pro_feature_discovery'),
+                             $r('app.string.pro_feature_discovery_hint'))
+          this.ProFeatureRow($r('app.string.pro_feature_reconnect'),
+                             $r('app.string.pro_feature_reconnect_hint'))
+          this.ProFeatureRow($r('app.string.pro_feature_rotation'),
+                             $r('app.string.pro_feature_rotation_hint'))
+        }
+        .padding(16).backgroundColor(COLOR_PANEL_BG).borderRadius(12).width('100%')
+        .alignItems(HorizontalAlign.Start)
+
+        if (this.proStatusHint.length > 0) {
+          Text(this.proStatusHint).fontSize(12).fontColor(COLOR_ERR).textAlign(TextAlign.Center)
+        }
+
+        Button(this.proPurchaseInFlight
+          ? I18n.s($r('app.string.pro_purchasing'))
+          : I18n.s($r('app.string.pro_modal_buy'),
+            this.proProductPrice.length > 0 ? this.proProductPrice : '...'))
+          .width('100%').height(44)
+          .fontSize(15).fontWeight(FontWeight.Medium).fontColor(COLOR_TEXT)
+          .backgroundColor(COLOR_PRIMARY).borderRadius(10)
+          .enabled(!this.proPurchaseInFlight)
+          .onClick((): void => { this.startProPurchase() })
+
+        Row() {
+          Text($r('app.string.pro_restore'))
+            .fontSize(13).fontColor(COLOR_HINT)
+            .onClick((): void => { this.restoreProPurchase() })
+          Blank().layoutWeight(1)
+          Text($r('app.string.btn_done'))
+            .fontSize(13).fontColor(COLOR_HINT)
+            .onClick((): void => {
+              if (!this.proPurchaseInFlight) this.showProModal = false
+            })
+        }.width('100%')
+      }
+      .padding(24).backgroundColor(COLOR_CARD).borderRadius(20).width('86%')
+      .constraintSize({ maxHeight: '85%' })
+      .alignItems(HorizontalAlign.Center)
+      .onClick((): void => { /* eat */ })
+    }
+    .width('100%').height('100%')
+  }
+
+  @Builder
+  ProFeatureRow(label: ResourceStr, hint: ResourceStr) {
+    Row() {
+      Text('✓').fontSize(14).fontColor(COLOR_OK).margin({ right: 8 })
+      Column() {
+        Text(label).fontSize(13).fontWeight(FontWeight.Medium).fontColor(COLOR_TEXT)
+        Text(hint).fontSize(11).fontColor(COLOR_SUBTEXT).margin({ top: 2 })
+      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+    }.width('100%')
   }
 
   @Builder
@@ -1439,22 +1699,34 @@ struct Index {
           .padding(16).backgroundColor(COLOR_PANEL_BG).borderRadius(12).width('100%')
           .alignItems(HorizontalAlign.Start)
 
-          // Auto Behavior（USB-only / Auto Reconnect）
+          // Pro 状态 + Auto Behavior（自动发现 / 自动重连 / 自动旋转都是 Pro 特性）
           Column() {
-            Text($r('app.string.settings_auto_title')).fontSize(17).fontWeight(FontWeight.Bold)
-              .fontColor(COLOR_TEXT).margin({ bottom: 12 }).width('100%')
+            // Pro 状态 banner
+            this.ProBanner()
 
-            this.StatToggleRow({
-              label: $r('app.string.settings_usb_only'),
-              hint: $r('app.string.settings_usb_only_hint'),
-              isOn: this.wifiDisabled,
-              onChange: (v: boolean): void => { this.wifiDisabled = v; this.persistUi() },
+            Text($r('app.string.settings_auto_title')).fontSize(17).fontWeight(FontWeight.Bold)
+              .fontColor(COLOR_TEXT).margin({ bottom: 4, top: 12 }).width('100%')
+            Text($r('app.string.settings_auto_pro_hint'))
+              .fontSize(11).fontColor(COLOR_SUBTEXT).margin({ bottom: 12 }).width('100%')
+
+            // 自动发现：UI 反向绑定 wifiDisabled（"自动发现 = !wifiDisabled"）
+            this.ProToggleRow({
+              label: $r('app.string.settings_auto_discovery'),
+              hint: $r('app.string.settings_auto_discovery_hint'),
+              isOn: !this.wifiDisabled,
+              onChange: (v: boolean): void => { this.wifiDisabled = !v; this.persistUi() },
             })
-            this.StatToggleRow({
+            this.ProToggleRow({
               label: $r('app.string.settings_auto_reconnect'),
               hint: $r('app.string.settings_auto_reconnect_hint'),
               isOn: this.autoReconnect,
               onChange: (v: boolean): void => { this.autoReconnect = v; this.persistUi() },
+            })
+            this.ProToggleRow({
+              label: $r('app.string.settings_auto_rotation'),
+              hint: $r('app.string.settings_auto_rotation_hint'),
+              isOn: this.autoRotation,
+              onChange: (v: boolean): void => { this.autoRotation = v; this.persistUi() },
             })
           }
           .padding(16).backgroundColor(COLOR_PANEL_BG).borderRadius(12).width('100%')
@@ -1686,6 +1958,11 @@ struct Index {
       // About Modal（叠在 Settings 之上）
       if (this.showAbout) {
         this.AboutModal()
+      }
+
+      // Pro Upgrade Modal — 最上层（购买流程进行中不能被其他 modal 遮）
+      if (this.showProModal) {
+        this.ProUpgradeModal()
       }
     }
     .width('100%').height('100%')
